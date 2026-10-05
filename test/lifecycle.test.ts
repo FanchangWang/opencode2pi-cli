@@ -86,7 +86,10 @@ test('only a main session shuts the chain down', async () => {
     on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void> | void) => handlers.set(event, handler),
   } as never);
 
+  // Two names on purpose: the provider it registers, and the plugin's own
+  // command. Conflating them is exactly the confusion this guards.
   expect(registered[0]!.name).toBe('opencode-zen-cli');
+  expect(registered[1]!.name).toBe('opencode2pi-cli');
   expect((registered[0]!.config as { baseUrl: string }).baseUrl).toBe('http://127.0.0.1:41980/v1');
 
   const shutdown = handlers.get('session_shutdown')!;

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 // The directory name is also the project's application id, so the data of a previous install
 // under another name is never read back.
-const APP_DIR = 'opencode-zen-cli';
+const APP_DIR = 'opencode2pi-cli';
 
 export function dataDirectory(platform = process.platform, env = process.env, home = os.homedir()): string {
   const p = platform === 'win32' ? path.win32 : path.posix;

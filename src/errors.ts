@@ -31,10 +31,10 @@ export interface Classification {
 }
 
 const ADVICE: Readonly<Record<UpstreamFailure, string>> = {
-  RUNTIME_MISSING: '本地链路未就绪（opencode CLI 缺失、serve 未启动或本地代理不可达）：先运行 /opencode-zen-cli doctor 查看具体哪一项失败。',
-  MODEL_GONE: '模型已不可用（目录中已无该模型或上游返回 404）：用 /opencode-zen-cli status 查看当前目录。',
+  RUNTIME_MISSING: '本地链路未就绪（opencode CLI 缺失、serve 未启动或本地代理不可达）：先运行 /opencode2pi-cli doctor 查看具体哪一项失败。',
+  MODEL_GONE: '模型已不可用（目录中已无该模型或上游返回 404）：用 /opencode2pi-cli status 查看当前目录。',
   RATE_LIMIT: '上游限流或配额耗尽（429）：稍后重试，或换一个模型；本插件无法绕过上游配额。',
-  REQUEST_REJECTED: '上游拒绝了这次请求（400）：通常是给只支持对话的模型派发了工具，先用 /opencode-zen-cli probe 重新确认能力。',
+  REQUEST_REJECTED: '上游拒绝了这次请求（400）：通常是给只支持对话的模型派发了工具，先用 /opencode2pi-cli probe 重新确认能力。',
   UPSTREAM: '上游暂时不可用（5xx 或传输失败）：稍后重试。',
   UNKNOWN: '未分类的上游错误。',
 }

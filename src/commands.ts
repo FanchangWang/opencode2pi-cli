@@ -1,5 +1,5 @@
 /**
- * `/opencode-zen-cli` — the extension's only interface.
+ * `/opencode2pi-cli` — the extension's only interface.
  *
  * omp has no settings page for extensions, so a slash command plus the TUI is
  * the whole surface. Three capabilities, each answering a question the user
@@ -29,7 +29,17 @@ import {
 } from './health.ts'
 import { apiKey, publishChatOnly, publishHealth, refreshProvider, state } from './runtime-host.ts'
 
-const USAGE = '用法：/opencode-zen-cli <doctor|status|probe>'
+/**
+ * The slash command, named after the plugin rather than the provider.
+ *
+ * Two names are in play and confusing them is the fastest way to send someone
+ * to the wrong place: `opencode2pi-cli` is the plugin (npm package, command,
+ * repository) and `opencode-zen-cli` is the *provider* it registers, which only
+ * ever appears in `--model opencode-zen-cli/<id>` and in `/model`.
+ */
+export const COMMAND = 'opencode2pi-cli';
+
+const USAGE = `用法：/${COMMAND} <doctor|status|probe>`;
 
 const AGE = (record: HealthRecord): string => {
   const minutes = Math.round((Date.now() - record.checkedAt) / 60_000)
@@ -69,7 +79,7 @@ async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandCont
 async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Promise<void> {
   const current = state()
   if (current.phase !== 'ready') {
-    ctx.ui.notify(`opencode-zen-cli 未就绪（${current.message}）。用 /opencode-zen-cli doctor 查看详情。`, 'error')
+    ctx.ui.notify(`${COMMAND} 未就绪（${current.message}）。用 /${COMMAND} doctor 查看详情。`, 'error')
     return
   }
   const roster = current.catalog
@@ -77,7 +87,7 @@ async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Prom
   const stale = roster.some(model => isStale(stored[model.id]))
 
   if (!runProbe && !stale) {
-    ctx.ui.notify(`opencode-zen-cli 模型状态：\n${roster.map(model => rosterLine(model, stored[model.id])).join('\n')}`)
+    ctx.ui.notify(`${COMMAND} 模型状态：\n${roster.map(model => rosterLine(model, stored[model.id])).join('\n')}`)
     return
   }
 
@@ -102,7 +112,7 @@ async function showMenu(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify(USAGE)
     return
   }
-  const choice = await ctx.ui.select('opencode-zen-cli', [
+  const choice = await ctx.ui.select(COMMAND, [
     { label: 'doctor', description: '逐项检查 CLI、serve、本地代理、模型目录与一次真实推理' },
     { label: 'status', description: '查看模型健康状态（必要时自动重新探测）' },
     { label: 'probe', description: '重新探测全部模型，并把仅对话结论写回模型列表' },

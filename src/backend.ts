@@ -574,7 +574,7 @@ export class Backend {
   async v1Complete(request: PreparedRequest, signal: AbortSignal | undefined, meta: CompletionMeta = {}): Promise<CompletionResult> {
     meta.steps = 0; meta.nativeAttempts = 0; meta.permissions = [];
     // Native tools require approval; the bridge aborts any attempted native action.
-    const session = await this.request('/session', 'POST', { title: 'opencode-zen-cli', permission: Object.entries(nativePermissions).map(([permission, action]) => ({ permission, pattern: '*', action })) }, signal);
+    const session = await this.request('/session', 'POST', { title: 'opencode2pi-cli', permission: Object.entries(nativePermissions).map(([permission, action]) => ({ permission, pattern: '*', action })) }, signal);
     const sessionID = String((session as { id: string }).id);
     const route = `/session/${encodeURIComponent(sessionID)}`;
     meta.sessionID = sessionID;
@@ -765,7 +765,7 @@ export class Backend {
     meta.steps = 0; meta.nativeAttempts = 0; meta.permissions = [];
     const modelID = stripModelPrefix(request.model.id);
     const session = await this.request('/api/session', 'POST', {
-      title: 'opencode-zen-cli',
+      title: 'opencode2pi-cli',
       agent: request.chatOnly ? 'buddy-chat' : 'buddy-bridge',
       model: { id: modelID, providerID: 'opencode', ...(request.variant ? { variant: request.variant } : {}) },
       permissions: v2Ruleset(v2NativePermissions),

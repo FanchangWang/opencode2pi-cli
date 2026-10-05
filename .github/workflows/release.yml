@@ -1,8 +1,8 @@
 name: Release
 
 # Publishing is triggered by pushing a version tag. One `npm publish` serves both
-# hosts: pi (`pi install npm:opencode-zen-cli`) and omp (`omp install
-# npm:opencode-zen-cli`) both resolve extensions out of the npm registry.
+# hosts: pi (`pi install npm:opencode2pi-cli`) and omp (`omp install
+# npm:opencode2pi-cli`) both resolve extensions out of the npm registry.
 #
 # The package ships TypeScript sources and zero runtime dependencies, so there is
 # no build step: `files: ["src/"]` is the entire payload.
@@ -137,9 +137,9 @@ jobs:
           notes="$(mktemp)"
           if [ "${NPM_PUBLISHED:-}" = "true" ]; then
             if [ "${TOKEN_AUTH:-false}" = "true" ]; then
-              printf 'Published to npm as `opencode-zen-cli@%s` (authenticated with `NPM_TOKEN`).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
+              printf 'Published to npm as `opencode2pi-cli@%s` (authenticated with `NPM_TOKEN`).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
             else
-              printf 'Published to npm as `opencode-zen-cli@%s` (authenticated with OIDC trusted publishing).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
+              printf 'Published to npm as `opencode2pi-cli@%s` (authenticated with OIDC trusted publishing).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
             fi
           elif [ "${TOKEN_AUTH:-false}" = "true" ]; then
             printf '**npm publish failed for this tag** (NPM_TOKEN authentication).\n\n' > "$notes"
@@ -150,8 +150,8 @@ jobs:
           Install:
 
           ```sh
-          omp install npm:opencode-zen-cli
-          pi install npm:opencode-zen-cli
+          omp install npm:opencode2pi-cli
+          pi install npm:opencode2pi-cli
           ```
 
           Requires the OpenCode CLI on PATH (`npm i -g @opencode/cli`).

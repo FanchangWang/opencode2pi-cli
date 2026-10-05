@@ -1,6 +1,6 @@
 # AGENTS.md
 
-给接手 `opencode-zen-cli` 的 AI。**动手前先读完本文件。**
+给接手 `opencode2pi-cli` 的 AI。**动手前先读完本文件。**
 
 ---
 
@@ -88,7 +88,7 @@ src/
   health.ts        逐模型探测、判定规则、落盘
   errors.ts        失败分类（本机链路语义，与 Zen 直连不同）
   doctor.ts        五项体检
-  commands.ts      /opencode-zen-cli 三条命令与 TUI
+  commands.ts      /opencode2pi-cli 三条命令与 TUI
   probe.ts         探测原语（工具调用探测体）
   platform.ts      数据目录（含 OPENCODE_ZEN_CLI_DATA_DIR 覆盖）
   system-proxy.ts  系统代理读取（win32 注册表 / macOS scutil）
@@ -129,7 +129,7 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 
 （用户自己可能开着 `opencode serve --service`，那是无关进程。）
 
-`/opencode-zen-cli doctor|status|probe` 需要交互式 TUI；打印模式下 probe 不可用。
+`/opencode2pi-cli doctor|status|probe` 需要交互式 TUI；打印模式下 probe 不可用。
 要无头验证 doctor，直接 `import { runDoctor } from './src/doctor.ts'` 跑即可。
 
 ---

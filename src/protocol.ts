@@ -154,7 +154,7 @@ export function prepare(body: ChatBody, models: readonly CatalogModel[]): Prepar
   // supportsTools: false, so this only covers a client that sends tools anyway.
   if (model.chatOnly) {
     if (tools.length || forced || choice === 'required')
-      process.stderr.write(`[opencode-zen-cli] ${model.id}: dropped ${tools.length} tool(s), chat-only model\n`);
+      process.stderr.write(`[opencode2pi-cli] ${model.id}: dropped ${tools.length} tool(s), chat-only model\n`);
     return { model, variant, images, chatOnly: true, tools: [], choice: 'none', forced: null, parallel: false,
       system: 'Continue the conversation provided as JSON. Reply in plain text. You have no tools. Do not invoke native tools or claim to execute actions. If an action is requested, explain that this model supports chat only.' + imageInstructions,
       text: JSON.stringify(messages) };

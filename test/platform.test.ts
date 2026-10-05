@@ -5,10 +5,10 @@ import { locateOpencode, runtimeCandidates } from '../src/runtime.ts';
 import { parseWindowsProxy } from '../src/system-proxy.ts';
 
 test('platform paths preserve macOS data and locate Windows and Linux data', () => {
-  expect(dataDirectory('darwin', {}, '/Users/test')).toBe('/Users/test/Library/Application Support/opencode-zen-cli');
-  expect(dataDirectory('win32', { APPDATA: 'C:\\Users\\测试\\AppData\\Roaming' }, 'C:\\Users\\测试')).toBe('C:\\Users\\测试\\AppData\\Roaming\\opencode-zen-cli');
-  expect(dataDirectory('win32', {}, 'C:\\Users\\Test')).toBe('C:\\Users\\Test\\AppData\\Roaming\\opencode-zen-cli');
-  expect(dataDirectory('linux', { XDG_CONFIG_HOME: '/tmp/config' }, '/home/test')).toBe('/tmp/config/opencode-zen-cli');
+  expect(dataDirectory('darwin', {}, '/Users/test')).toBe('/Users/test/Library/Application Support/opencode2pi-cli');
+  expect(dataDirectory('win32', { APPDATA: 'C:\\Users\\测试\\AppData\\Roaming' }, 'C:\\Users\\测试')).toBe('C:\\Users\\测试\\AppData\\Roaming\\opencode2pi-cli');
+  expect(dataDirectory('win32', {}, 'C:\\Users\\Test')).toBe('C:\\Users\\Test\\AppData\\Roaming\\opencode2pi-cli');
+  expect(dataDirectory('linux', { XDG_CONFIG_HOME: '/tmp/config' }, '/home/test')).toBe('/tmp/config/opencode2pi-cli');
 });
 
 test('the data directory override wins over the platform default', () => {

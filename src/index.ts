@@ -1,5 +1,5 @@
 /**
- * opencode-zen-cli — OpenCode Zen's free models as an omp/pi provider.
+ * opencode2pi-cli — OpenCode Zen's free models as an omp/pi provider.
  *
  * The whole chain lives inside the omp process: this extension locates the
  * user's `opencode` CLI, launches an isolated `opencode serve`, opens a local
@@ -16,7 +16,7 @@
 
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent'
 
-import { handleCommand } from './commands.ts'
+import { COMMAND, handleCommand } from './commands.ts'
 import { applyProvider, PROVIDER } from './provider.ts'
 import { acquire, apiKey, killOnExit, onProviderRefresh, release, state } from './runtime-host.ts'
 
@@ -40,8 +40,8 @@ export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
     pi.logger.warn(`[${PROVIDER}] 启动失败：${(error as Error).message}`)
   }
 
-  pi.registerCommand('opencode-zen-cli', {
-    description: 'opencode-zen-cli 诊断：doctor 检查本地链路，status/probe 查看模型健康',
+  pi.registerCommand(COMMAND, {
+    description: `${COMMAND} 诊断：doctor 检查本地链路，status/probe 查看模型健康`,
     handler: handleCommand,
   })
 
@@ -50,7 +50,7 @@ export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
     if (current.phase === 'ready') {
       ctx.ui.notify(`${PROVIDER} 已就绪 · ${current.catalog.length} 个免费模型 · ${current.endpoint}`, 'info')
     } else if (current.phase === 'error') {
-      ctx.ui.notify(`${PROVIDER} 启动失败：${current.message}（用 /${PROVIDER} doctor 查看详情）`, 'error')
+      ctx.ui.notify(`${PROVIDER} 启动失败：${current.message}（用 /${COMMAND} doctor 查看详情）`, 'error')
     }
   })
 

@@ -1,4 +1,4 @@
-# opencode-zen-cli
+# opencode2pi-cli
 
 在 **omp** / **pi** 里直接用 [OpenCode Zen](https://opencode.ai/zen) 的**免费模型**，
 由**你自己机器上的 OpenCode CLI** 提供。
@@ -6,7 +6,7 @@
 **无需 API key · 无需注册 · 无需另开终端 · 无需手改配置文件**
 
 > ⚠️ **免费池随时可能变动。** 模型上下线、限流、临时故障都是常态。
-> 出问题先跑 `/opencode-zen-cli doctor`，它会逐项告诉你链路断在哪一环。
+> 出问题先跑 `/opencode2pi-cli doctor`，它会逐项告诉你链路断在哪一环。
 
 与 [`opencode2pi`](https://github.com/FanchangWang/opencode2pi) 的区别：那一个直连 Zen 的
 匿名通道（无子进程）；这一个走本机 `opencode serve`，所以**需要你先装好 OpenCode CLI**，
@@ -29,8 +29,8 @@ npm i -g opencode-ai
 
 ```sh
 # 推荐：npm（pi 与 omp 都从这个源装；npm 还没上线时用下面的 git）
-omp install npm:opencode-zen-cli
-pi  install npm:opencode-zen-cli
+omp install npm:opencode2pi-cli
+pi  install npm:opencode2pi-cli
 
 # 不走 npm：从 git 装。注意：omp/pi 不支持 .tgz，只能用 git URL
 omp install git:https://github.com/FanchangWang/opencode2pi-cli@stable
@@ -114,15 +114,15 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free \
 
 ---
 
-## `/opencode-zen-cli`
+## `/opencode2pi-cli`
 
 omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 
 | 命令 | 作用 |
 | --- | --- |
-| `/opencode-zen-cli doctor` | 逐项检查五个环节：CLI、`serve`、本地代理、模型目录、一次真实推理 |
-| `/opencode-zen-cli status` | 查看每个模型的健康标记（记录过期时自动重新探测） |
-| `/opencode-zen-cli probe` | 强制重新探测全部模型，并把「仅对话」结论写回模型列表 |
+| `/opencode2pi-cli doctor` | 逐项检查五个环节：CLI、`serve`、本地代理、模型目录、一次真实推理 |
+| `/opencode2pi-cli status` | 查看每个模型的健康标记（记录过期时自动重新探测） |
+| `/opencode2pi-cli probe` | 强制重新探测全部模型，并把「仅对话」结论写回模型列表 |
 
 不带参数执行会弹出三项菜单。
 
@@ -170,7 +170,7 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | --- | --- |
 | `Unknown provider "opencode-zen-cli"` | 用了 `--provider`。改用 `--model opencode-zen-cli/<id>` |
 | 启动时提示未找到 OpenCode | 没装 CLI，或不在 PATH 上。`opencode -v` 验证 |
-| 启动时提示启动失败 | 跑 `/opencode-zen-cli doctor`；细节在数据目录的 `opencode.log` |
+| 启动时提示启动失败 | 跑 `/opencode2pi-cli doctor`；细节在数据目录的 `opencode.log` |
 | `serve` 60 秒没就绪 | 上游模型目录拉取慢或网络不通；看 `opencode.log`，或设 `OPENCODE_ZEN_CLI_PROXY=0` 直连 |
 | 端口 41980 被占用 | 默认端口会自动退让到系统分配的端口（通知里会显示真实端口）。想固定就设 `OPENCODE_ZEN_CLI_PORT`，此时占用会直接启动失败 |
 | 从 `opencode-omp-bridge` 迁过来的 | `models.yml` 里的旧配置块本扩展不读不写，可自行删除；`config.yml` 里的 `modelRoles` 若指向 `opencode-zen/...`，需改成 `opencode-zen-cli/...` |

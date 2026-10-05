@@ -47,7 +47,7 @@ async function inferenceCheck(catalog: readonly CatalogModel[]): Promise<{ ok: b
 }
 
 /**
- * `/opencode-zen-cli doctor` — the whole local chain, itemized.
+ * `/opencode2pi-cli doctor` — the whole local chain, itemized.
  *
  * The chain has five links and they fail independently: the CLI is not installed,
  * `serve` never became ready, the proxy is not listening, the catalog is empty,
