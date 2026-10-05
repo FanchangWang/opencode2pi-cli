@@ -1,0 +1,183 @@
+name: Release
+
+# Publishing is triggered by pushing a version tag. One `npm publish` serves both
+# hosts: pi (`pi install npm:opencode-zen-cli`) and omp (`omp install
+# npm:opencode-zen-cli`) both resolve extensions out of the npm registry.
+#
+# The package ships TypeScript sources and zero runtime dependencies, so there is
+# no build step: `files: ["src/"]` is the entire payload.
+#
+# Required repository secret: NPM_TOKEN (an npm automation token with publish
+# access to this package).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # npm provenance attestation
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # `npm test` runs `bun test`; bun is not on stock runners.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # A tag that disagrees with package.json is the failure mode that silently
+      # publishes the wrong version, so it is checked before anything else.
+      - name: Verify the tag matches the package version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+          echo "releasing v$version"
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+      # The extension is multi-module and loads itself from src/, so a tarball
+      # missing any file fails only at the user's first command. Assert the whole
+      # payload here instead.
+      - name: Verify the packed tarball
+        run: |
+          set -euo pipefail
+          tarball="$(npm pack --silent)"
+          # `tar` output carries CRLF on Windows checkouts; strip it so the
+          # exact-match assertions below hold on every runner.
+          contents="$(tar -tzf "$tarball" | tr -d '\r')"
+          echo "$contents"
+          for required in \
+            package/src/index.ts \
+            package/src/commands.ts \
+            package/src/doctor.ts \
+            package/src/errors.ts \
+            package/src/health.ts \
+            package/src/platform.ts \
+            package/src/probe.ts \
+            package/src/provider.ts \
+            package/src/runtime-host.ts \
+            package/src/runtime.ts \
+            package/src/server.ts; do
+            echo "$contents" | grep -qx "$required" || { echo "::error::$required missing from tarball"; exit 1; }
+          done
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+
+      # Secrets are not directly readable in an `if:` expression, so the
+      # presence check is done as a step and surfaced as an output.
+      - name: Detect the npm token
+        id: npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No NPM_TOKEN; the publish step will try OIDC trusted publishing. If no trusted publisher is configured on npmjs.com, the publish fails but the GitHub release is still produced."
+          fi
+
+      # Two authentication paths, in npm's own order of preference:
+      #   NPM_TOKEN present  → token auth, provenance generated via the flag
+      #   otherwise         → OIDC trusted publishing, which the npm CLI
+      #                       auto-detects; provenance is generated
+      #                       automatically, so --provenance must be omitted
+      #                       (it is redundant, not harmful, but says nothing
+      #                       true about who actually authenticated).
+      #
+      # Only this step is conditional. If it is skipped or fails, the tag and the
+      # release must still be produced: omp and pi both install from a git ref,
+      # so a release without npm is a complete, usable distribution.
+      - name: Publish to npm
+        id: publish
+        env:
+          TOKEN_AUTH: ${{ steps.npm.outputs.available }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${TOKEN_AUTH:-false}" = "true" ]; then
+            echo "Authenticating with NPM_TOKEN."
+            npm publish --provenance --access public
+          else
+            echo "No NPM_TOKEN; using OIDC trusted publishing."
+            # Trusted publishing requires npm >= 11.5.1. The runner ships a
+            # recent npm, but failing here with a clear message beats failing
+            # later with an opaque ENEEDAUTH.
+            version="$(npm --version)"
+            if [ "$(printf '%s\n%s\n' "$version" 11.5.1 | sort -V | head -n1)" != "11.5.1" ]; then
+              echo "::error::npm $version cannot use OIDC trusted publishing; 11.5.1 or newer is required."
+              exit 1
+            fi
+            npm publish --access public
+          fi
+
+      - name: Create the GitHub release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ env.TARBALL }}
+          NPM_PUBLISHED: ${{ steps.publish.outcome == 'success' }}
+          TOKEN_AUTH: ${{ steps.npm.outputs.available }}
+        run: |
+          notes="$(mktemp)"
+          if [ "${NPM_PUBLISHED:-}" = "true" ]; then
+            if [ "${TOKEN_AUTH:-false}" = "true" ]; then
+              printf 'Published to npm as `opencode-zen-cli@%s` (authenticated with `NPM_TOKEN`).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
+            else
+              printf 'Published to npm as `opencode-zen-cli@%s` (authenticated with OIDC trusted publishing).\n\n' "${GITHUB_REF_NAME#v}" > "$notes"
+            fi
+          elif [ "${TOKEN_AUTH:-false}" = "true" ]; then
+            printf '**npm publish failed for this tag** (NPM_TOKEN authentication).\n\n' > "$notes"
+          else
+            printf '**npm was not published for this tag** (no `NPM_TOKEN` secret and OIDC trusted publishing is not configured for this package).\n\n' > "$notes"
+          fi
+          cat >> "$notes" <<'EOF'
+          Install:
+
+          ```sh
+          omp install npm:opencode-zen-cli
+          pi install npm:opencode-zen-cli
+          ```
+
+          Requires the OpenCode CLI on PATH (`npm i -g @opencode/cli`).
+
+          Without npm, install straight from the tag:
+
+          ```sh
+          omp install git:https://github.com/FanchangWang/opencode2pi-cli@<tag>
+          pi  install git:https://github.com/FanchangWang/opencode2pi-cli@<tag>
+          ```
+          EOF
+          sed -i "s|<tag>|$GITHUB_REF_NAME|g" "$notes"
+          # An empty asset argument would be passed through to `gh` verbatim,
+          # so the tarball is only added when it actually exists.
+          args=(--title "$GITHUB_REF_NAME" --notes-file "$notes")
+          if [ -n "${TARBALL:-}" ] && [ -f "${TARBALL:-}" ]; then
+            args+=("$TARBALL")
+          fi
+          gh release create "$GITHUB_REF_NAME" "${args[@]}" \
+            || gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+
+      # `stable` is the ref README installs from, so the install command in
+      # README.md never has to be hand-edited when a version ships. It moves
+      # last and gates nothing: a release that failed an earlier check produced
+      # nothing worth pointing anybody at.
+      - name: Move the stable ref to this release
+        if: always()
+        run: |
+          git push --force origin "$GITHUB_SHA:refs/tags/stable"

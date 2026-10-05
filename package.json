@@ -1,9 +1,21 @@
 {
   "name": "opencode-zen-cli",
   "version": "0.1.0",
-  "description": "OpenCode Zen's free models through a local OpenCode CLI, as an in-process omp/pi provider extension.",
+  "description": "OpenCode Zen's free models, served through your local OpenCode CLI, as an in-process omp/pi provider extension.",
   "license": "MIT",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FanchangWang/opencode2pi-cli.git"
+  },
+  "keywords": [
+    "omp",
+    "pi",
+    "pi-extension",
+    "opencode",
+    "opencode-zen",
+    "free-models",
+    "pi-package"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"
