@@ -28,17 +28,25 @@ npm i -g opencode-ai
 然后装扩展：
 
 ```sh
-# 推荐：npm（pi 与 omp 都从这个源装）
+# 推荐：npm（pi 与 omp 都从这个源装；npm 还没上线时用下面的 git）
 omp install npm:opencode-zen-cli
 pi  install npm:opencode-zen-cli
 
 # 不走 npm：从 git 装。注意：omp/pi 不支持 .tgz，只能用 git URL
 omp install git:https://github.com/FanchangWang/opencode2pi-cli@stable
 pi  install git:https://github.com/FanchangWang/opencode2pi-cli@stable
+
+# 追踪最新代码：装的是"此刻 main 指向的 commit"，含未发布的改动，之后不会自动更新
+omp install git:https://github.com/FanchangWang/opencode2pi-cli@main
+pi  install git:https://github.com/FanchangWang/opencode2pi-cli@main
 ```
 
 `@stable` 是最近一次发版的版本，随发版前移；要固定到某一版，去
-[releases](https://github.com/FanchangWang/opencode2pi-cli/releases) 挑一个 tag。
+[releases](https://github.com/FanchangWang/opencode2pi-cli/releases) 挑一个 tag，
+把 `@stable` 换成那个 tag 名或 commit SHA。本扩展跟着本机 OpenCode CLI 的目录走，
+上游随时可能改模型池或协议行为，只有钉死才能复现"当时能用"的状态。
+
+`@latest` 用不了：git 没有这个 ref，omp 解析会报错。
 
 ### 从源码运行（开发用）
 
