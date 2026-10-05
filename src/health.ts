@@ -23,6 +23,7 @@ import type { CatalogModel } from './backend.ts';
 import { atomicWrite } from './atomic.ts';
 import { classifyFailure, type UpstreamFailure } from './errors.ts'
 import { resolveDataDirectory } from './platform.ts'
+import { BridgeError } from './protocol.ts'
 import { formatUnsupported, probeBody, probeFailure, probeModel as probeUpstream, PROBE_TIMEOUT, type ProbeCompletion } from './probe.ts'
 
 /**
@@ -33,6 +34,12 @@ import { formatUnsupported, probeBody, probeFailure, probeModel as probeUpstream
  */
 const PROBE_CONCURRENCY = 2
 const PROBE_GAP_MS = 500
+
+/**
+ * How many times the tool round may come back chat-shaped before a model is
+ * demoted to chat-only. Two, because one bad round is a known occurrence.
+ */
+const TOOL_ROUND_ATTEMPTS = 2
 
 function delay(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>()
@@ -83,6 +90,10 @@ export function healthFor(kind: UpstreamFailure | 'OK'): ModelHealth {
       return 'ok'
     case 'MODEL_GONE':
       return 'flaky'
+    // A geo block is deterministic for a given egress: retrying the same
+    // request from the same network will keep saying no.
+    case 'REGION_BLOCKED':
+      return 'dead'
     case 'RATE_LIMIT':
       return 'limited'
     case 'RUNTIME_MISSING':
@@ -160,38 +171,44 @@ async function probeModel(model: CatalogModel, options: ProbeOptions): Promise<P
   };
 
   const toolsStart = Date.now()
-  let toolsMs = 0
-  try {
-    await probeUpstream({ complete: token => send(probeBody(model, token)), retries: 1 })
-    toolsMs = Date.now() - toolsStart
-    return finish({ health: 'ok', kind: 'OK', chatOnly: false, toolsMs, detail: '可用 · 支持工具调用' })
-  } catch (cause) {
-    const error = probeFailure(cause, timedOut) as Error & { status?: number; code?: string }
-    toolsMs = Date.now() - toolsStart
-    // Three outcomes all mean "this model talks, but not in the tool shape":
-    // a format the model cannot produce, prose where an action was asked for,
-    // and a model that tried to run the action locally. Only the plain round
-    // below can tell a usable chat model from a model that refuses both.
-    const chatCandidate = formatUnsupported(error) || error.code === 'no_action' || error.code === 'native_tool_activity'
-    if (chatCandidate && !timedOut) {
-      const textStart = Date.now()
-      try {
-        await send({ model: model.id, messages: [{ role: 'user', content: 'Reply only OK.' }] })
-        const textMs = Date.now() - textStart
-        return finish({ health: 'ok', kind: 'OK', chatOnly: true, toolsMs, textMs,
-          detail: '可用 · 仅对话（不支持工具调用）' })
-      } catch (textCause) {
-        const textError = probeFailure(textCause, timedOut) as Error & { status?: number }
-        const classification = classifyFailure(textError.status, textError.message)
-        return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false, toolsMs,
-          textMs: Date.now() - textStart, detail: `纯文本也失败：${textError.message}` })
-      }
+  // A chat-shaped refusal is sometimes one bad round: measured 2026-10-06,
+  // `oc-big-pickle` answered a valid action call in one sweep and a native
+  // tool attempt in the next. Demoting on a single round costs a capable model
+  // its tools until the following sweep, so the tool round gets two chances
+  // before any of that is concluded.
+  let chatShaped = false
+  let toolError = new BridgeError('no tool round was attempted', 500, 'probe_error') as Error & { status?: number; code?: string }
+  for (let attempt = 0; attempt < TOOL_ROUND_ATTEMPTS; attempt++) {
+    try {
+      await probeUpstream({ complete: token => send(probeBody(model, token)), retries: 1 })
+      return finish({ health: 'ok', kind: 'OK', chatOnly: false, toolsMs: Date.now() - toolsStart, detail: '可用 · 支持工具调用' })
+    } catch (cause) {
+      toolError = probeFailure(cause, timedOut) as Error & { status?: number; code?: string }
+      // Three outcomes all mean "this model talks, but not in the tool shape":
+      // a format the model cannot produce, prose where an action was asked for,
+      // and a model that tried to run the action locally. Only the plain round
+      // below can tell a usable chat model from one that refuses both.
+      chatShaped = formatUnsupported(toolError) || toolError.code === 'no_action' || toolError.code === 'native_tool_activity'
+      if (!chatShaped || timedOut) break
     }
-    const classification = classifyFailure(error.status, error.message)
+  }
+  const toolsMs = Date.now() - toolsStart
+  if (!chatShaped || timedOut) {
+    const classification = classifyFailure(toolError.status, toolError.message)
     return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false, toolsMs,
-      detail: timedOut ? `探测超时（${Math.round(timeoutMs / 1000)}s）` : error.message })
-  } finally {
-    clearTimeout(timer)
+      detail: timedOut ? `探测超时（${Math.round(timeoutMs / 1000)}s）` : toolError.message })
+  }
+
+  const textStart = Date.now()
+  try {
+    await send({ model: model.id, messages: [{ role: 'user', content: 'Reply only OK.' }] })
+    return finish({ health: 'ok', kind: 'OK', chatOnly: true, toolsMs, textMs: Date.now() - textStart,
+      detail: '可用 · 仅对话（不支持工具调用）' })
+  } catch (textCause) {
+    const textError = probeFailure(textCause, timedOut) as Error & { status?: number }
+    const classification = classifyFailure(textError.status, textError.message)
+    return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false,
+      toolsMs, textMs: Date.now() - textStart, detail: `纯文本也失败：${textError.message}` })
   }
 }
 

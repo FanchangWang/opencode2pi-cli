@@ -89,6 +89,8 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 - 走**本地服务**而不是直连 OpenCode：这样测到的就是 omp 会遇到的东西，
   `chatOnly` 也能直接从结论里读出来。
 - 判定只有三档结果：`ok`（含 `chatOnly` 标记）、按 `errors.ts` 分类的失败。
+- **带工具的请求最多试两轮**才判定"仅对话"：实测 `oc-big-pickle` 在相邻两轮探测里
+  一次给出合法动作调用、一次去执行本地工具。单次即降级会让一个能用的模型白丢工具。
 - 每次探测一次带工具的真实对话，单模型 60s 上限；并发 2、间隔 500ms
   （免费上游按模型计费，一次全放会挤掉自己的后续配额）。
 - 存储 `<dataDir>/health.json`，TTL 6 小时；一次成功清零计数；
@@ -98,10 +100,10 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 
 ## 7. 失败分类（`errors.ts`）
 
-判定顺序 = 判错的代价顺序：
+判定顺序 = 判错的代价顺序（地区封锁排在最前，它和本地代理的 403 撞状态码）：
 
 ```
-RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM → 本地令牌/来源 → RUNTIME_MISSING → UNKNOWN
+REGION_BLOCKED → RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM → 本地令牌/来源 → RUNTIME_MISSING → UNKNOWN
 ```
 
 - 429 优先于一切：配额头和模型下线可以同时出现在一段错误文本里，配方才是能操作的那条信息。

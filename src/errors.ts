@@ -16,6 +16,8 @@ export type UpstreamFailure =
   | 'RUNTIME_MISSING'
   /** The model is no longer in the catalog, or the upstream answers 404. */
   | 'MODEL_GONE'
+  /** Zen refuses this model from the current egress (403 "not available in your country"). */
+  | 'REGION_BLOCKED'
   /** 429 or an exhausted quota. */
   | 'RATE_LIMIT'
   /** 400, including formatUnsupported on a chat-only model handed tools. */
@@ -33,6 +35,7 @@ export interface Classification {
 const ADVICE: Readonly<Record<UpstreamFailure, string>> = {
   RUNTIME_MISSING: '本地链路未就绪（opencode CLI 缺失、serve 未启动或本地代理不可达）：先运行 /opencode2pi-cli doctor 查看具体哪一项失败。',
   MODEL_GONE: '模型已不可用（目录中已无该模型或上游返回 404）：用 /opencode2pi-cli status 查看当前目录。',
+  REGION_BLOCKED: '该模型在当前网络地区不可用（上游 403 · not available in your country）：这是上游的地区封锁，不是本机的问题；换一个模型，或设 OPENCODE_ZEN_CLI_PROXY=1 走系统代理换出口。',
   RATE_LIMIT: '上游限流或配额耗尽（429）：稍后重试，或换一个模型；本插件无法绕过上游配额。',
   REQUEST_REJECTED: '上游拒绝了这次请求（400）：通常是给只支持对话的模型派发了工具，先用 /opencode2pi-cli probe 重新确认能力。',
   UPSTREAM: '上游暂时不可用（5xx 或传输失败）：稍后重试。',
@@ -50,6 +53,12 @@ const ADVICE: Readonly<Record<UpstreamFailure, string>> = {
 export function classifyFailure(status: number | undefined, message: string): Classification {
   const text = message.toLowerCase()
 
+  // Region before everything else: the block arrives as a 403, so a
+  // status-driven verdict reached first would blame the local proxy and send
+  // the user to debug the wrong machine. Measured 2026-10-06 on `oc-fledge-alpha-free`.
+  if (text.includes('not available in your country') || text.includes('regionerror') || text.includes('geo-block') || text.includes('geo block')) {
+    return { kind: 'REGION_BLOCKED', summary: ADVICE.REGION_BLOCKED }
+  }
   // Quota first: it is the verdict that a 429 status would otherwise hide behind
   // a phrase like "quota exceeded", which reads like a generic error otherwise.
   if (status === 429

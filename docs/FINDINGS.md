@@ -128,9 +128,14 @@ cache.write === 0` 且 `capabilities.output.text !== false` 且 `status !== 'dep
 
 ## 12. 失败分类为什么与 opencode2pi 不同
 
-Zen 直连有 `SHAPE_REJECTED` / `REGION_BLOCKED` / `AUTH`（403/401 的三种来源），
-本机链路**不存在**这些形态；取而代之的是 `RUNTIME_MISSING`——opencode CLI 缺失、
-serve 未就绪、本地代理不可达，这三者在直连方案里根本不存在。
+Zen 直连有 `SHAPE_REJECTED` / `AUTH`（403/401 的几种来源），本机链路**不存在**这两种形态；
+取而代之的是 `RUNTIME_MISSING`——opencode CLI 缺失、serve 未就绪、本地代理不可达，
+这三者在直连方案里根本不存在。
 
-401/403 在本项目里是**本地代理自己**的两种拒绝（令牌不匹配 / 浏览器 Origin），
+401/403 默认是**本地代理自己**的两种拒绝（令牌不匹配 / 浏览器 Origin），
 归入 `UNKNOWN` 并在 summary 里写明"内部错误"，否则用户会去查根本用不到的 API key。
+
+**但 403 不是只有这两种。** 实测 2026-10-06：`oc-fledge-alpha-free` 返回
+`HTTP 403 · This model is not available in your country`——地区封锁来自 Zen 上游，
+经本地链路透传上来。最初的判断（本链路不存在地区封锁，因此删掉 `REGION_BLOCKED`）
+是错的，已加回：判定顺序里它排在最前，因为它和本地 403 撞同一个状态码。

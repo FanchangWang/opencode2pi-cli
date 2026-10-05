@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 
 import {
   HEALTH_TTL_MS,
+  healthFor,
   isStale,
   mergeHealth,
   pruneHealth,
@@ -76,5 +77,16 @@ test('the summary counts the roster as displayed, not the raw verdicts', () => {
     'oc-a': mergeHealth({}, [result('oc-a', 'OK', 'ok')])['oc-a']!,
     'oc-b': mergeHealth(mergeHealth({}, [result('oc-b', 'MODEL_GONE', 'flaky')]), [result('oc-b', 'MODEL_GONE', 'flaky')])['oc-b']!,
   };
+
   expect(summarizeHealth(roster, store)).toBe('✅ 1  ❓ 1  ❌ 1');
+});
+
+test('a region block is fatal on the first verdict, unlike a retired model', () => {
+  // A geo block is deterministic for one egress: retrying from the same
+  // network keeps saying no, so waiting for a second strike would only delay
+  // the same answer.
+  expect(healthFor('REGION_BLOCKED')).toBe('dead');
+  const store = mergeHealth({}, [result('oc-a', 'REGION_BLOCKED', 'dead')]);
+  expect(store['oc-a']!.health).toBe('dead');
+  expect(store['oc-a']!.terminalFailures).toBe(0);
 });
