@@ -12,7 +12,7 @@ import {
 } from '../src/health.ts';
 
 function result(modelId: string, kind: ProbeResult['kind'], health: ProbeResult['health']): ProbeResult {
-  return { modelId, kind, health, detail: `${modelId}: ${kind}`, checkedAt: Date.now(), terminalFailures: 0, transientFailures: 0, latencyMs: 1, chatOnly: false };
+  return { modelId, kind, health, detail: `${modelId}: ${kind}`, checkedAt: Date.now(), terminalFailures: 0, transientFailures: 0, latencyMs: 1, toolsMs: 1, chatOnly: false };
 }
 
 test('one terminal verdict is only a warning; the second one condemns', () => {

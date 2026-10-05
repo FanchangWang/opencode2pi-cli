@@ -26,6 +26,7 @@ import {
   summarizeHealth,
   type HealthRecord,
   type ModelHealth,
+  type ProbeResult,
 } from './health.ts'
 import { apiKey, publishChatOnly, publishHealth, refreshProvider, state } from './runtime-host.ts'
 
@@ -57,17 +58,38 @@ function rosterLine(model: CatalogModel, record: HealthRecord | undefined): stri
 }
 
 /**
- * Probe the whole roster and fold the outcome back into the runtime.
+ * Render one finished probe.
+ *
+ * The two rounds are reported separately because they answer different
+ * questions: `工具` is what omp would pay for a real turn, `纯文本` is what the
+ * same model does with no tools at all. A model that is only slow with tools is
+ * a very different problem from one that is slow either way.
+ */
+function resultLine(result: ProbeResult): string {
+  const timing = result.textMs === undefined
+    ? `${(result.toolsMs / 1000).toFixed(1)}s`
+    : `工具 ${(result.toolsMs / 1000).toFixed(1)}s / 纯文本 ${(result.textMs / 1000).toFixed(1)}s`
+  return `${HEALTH_MARK[result.health]} ${result.modelId} — ${result.detail} · ${timing}`
+}
+
+/**
+ * Probe the whole roster, printing each verdict as it lands, then fold the
+ * outcome back into the runtime.
+ *
+ * A sweep takes minutes, so batching the output until the end means a user who
+ * has been staring at an unchanged screen has no way to tell "slow model" from
+ * "hung". One line per model, immediately, answers that as it goes.
  *
  * A model that answers but cannot carry tool calls is the point of the sweep:
  * publishing it as tool-capable would hand omp a model whose every turn ends in a
  * 400, so the verdict is written back into the registry, not just the report.
  */
-async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandContext): Promise<readonly { modelId: string; chatOnly: boolean }[]> {
+async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandContext): Promise<readonly ProbeResult[]> {
   const endpoint = state().endpoint
   if (!endpoint) throw new Error('本地代理未启动，无法探测')
   const results = await probeAll(catalog, { endpoint, key: apiKey() }, (done, total, result) => {
-    if (done % 5 === 0 || done === total) ctx.ui.setWorkingMessage(`正在探测 ${done}/${total}：${result.modelId}`)
+    ctx.ui.setWorkingMessage(`正在探测 ${done}/${total}`)
+    ctx.ui.notify(resultLine(result))
   })
   ctx.ui.setWorkingMessage()
   publishHealth(await saveHealth(results))
@@ -98,14 +120,16 @@ async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Prom
     return
   }
 
-  ctx.ui.notify(`正在探测 ${roster.length} 个模型（数分钟量级，可用 Esc 中断）…`)
+  ctx.ui.notify(`正在探测 ${roster.length} 个模型（每个模型一条结果，陆续输出）…`)
   const results = await sweep(roster, ctx)
-  const merged = state().health
-  const summary = summarizeHealth(roster, merged)
+  const summary = summarizeHealth(roster, state().health)
   const chatOnly = results.filter(result => result.chatOnly).map(result => result.modelId)
-  ctx.ui.notify(`探测完成：${summary}\n${roster.map(model => rosterLine(model, merged[model.id])).join('\n')}`
-    + (chatOnly.length ? `\n仅对话模型（已标记为不支持工具）：${chatOnly.join(', ')}` : ''))
+  // The per-model lines are already on screen; the closing block only carries
+  // what a reader cannot reconstruct from them.
+  ctx.ui.notify(`探测完成：${summary}`
+    + (chatOnly.length ? `\n仅对话模型（已写回为不支持工具）：${chatOnly.join(', ')}` : ''))
 }
+
 
 async function showMenu(ctx: ExtensionCommandContext): Promise<void> {
   if (!ctx.hasUI) {

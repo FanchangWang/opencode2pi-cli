@@ -96,7 +96,12 @@ export function healthFor(kind: UpstreamFailure | 'OK'): ModelHealth {
 
 export interface ProbeResult extends HealthRecord {
   readonly modelId: string
+  /** Wall time for the whole probe, both rounds included. */
   readonly latencyMs: number
+  /** The tool round: what omp would actually send. Always present. */
+  readonly toolsMs: number
+  /** The plain-text round: only when the tool round came back chat-shaped. */
+  readonly textMs?: number
   /** The model answered, but its response format cannot carry tool calls. */
   readonly chatOnly: boolean
 }
@@ -110,10 +115,20 @@ export interface ProbeOptions {
   readonly timeoutMs?: number
 }
 
+/**
+ * Probe one model in two rounds, and time them separately.
+ *
+ * The tool round is the real question — it is the request omp actually sends.
+ * When the model answers that with prose instead of an action, that is not a
+ * failure: it is a chat model. A second, tool-free round then proves the
+ * conversation works, and its duration is what tells the user whether the model
+ * is merely chatty-slow or genuinely broken. Collapsing both into one number
+ * would hide exactly the distinction the two rounds exist to make.
+ */
 async function probeModel(model: CatalogModel, options: ProbeOptions): Promise<ProbeResult> {
   const started = Date.now()
   const base = { modelId: model.id, checkedAt: Date.now(), terminalFailures: 0, transientFailures: 0 }
-  const finish = (verdict: Pick<ProbeResult, 'health' | 'kind' | 'detail' | 'chatOnly'>): ProbeResult =>
+  const finish = (verdict: Pick<ProbeResult, 'health' | 'kind' | 'detail' | 'chatOnly' | 'toolsMs' | 'textMs'>): ProbeResult =>
     ({ ...base, latencyMs: Date.now() - started, ...verdict })
 
   const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT
@@ -123,35 +138,87 @@ async function probeModel(model: CatalogModel, options: ProbeOptions): Promise<P
 
   // The same OpenAI-shaped request omp sends, down the same completion path —
   // so a verdict describes the model as omp will actually meet it.
-  const complete = async (token: string): Promise<ProbeCompletion> => {
+  const send = async (body: Record<string, unknown>): Promise<ProbeCompletion> => {
     const response = await fetch(`${options.endpoint}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.key}` },
-      body: JSON.stringify({ ...probeBody(model, token), stream: false }),
+      body: JSON.stringify({ ...body, stream: false }),
       signal: options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal,
     });
     if (!response.ok) {
-      const body = await response.text();
-      throw Object.assign(new Error(`HTTP ${response.status} ${body.slice(0, 300)}`), { status: response.status, code: 'model_error' });
+      // The local proxy relays OpenCode's own error code inside the body
+      // (`native_tool_activity`, `invalid_tool_call`, …). Dropping it would
+      // flatten every refusal into one verdict and lose the chat-only path,
+      // which is precisely what that code selects.
+      const raw = await response.text()
+      throw Object.assign(new Error(`HTTP ${response.status} · ${upstreamMessage(raw) ?? raw.slice(0, 200)}`), {
+        status: response.status,
+        code: upstreamCode(raw),
+      });
     }
     return await response.json() as ProbeCompletion;
   };
 
+  const toolsStart = Date.now()
+  let toolsMs = 0
   try {
-    await probeUpstream({ complete, retries: 1 });
-    return finish({ health: 'ok', kind: 'OK', chatOnly: false, detail: '可用 · 支持工具调用' });
+    await probeUpstream({ complete: token => send(probeBody(model, token)), retries: 1 })
+    toolsMs = Date.now() - toolsStart
+    return finish({ health: 'ok', kind: 'OK', chatOnly: false, toolsMs, detail: '可用 · 支持工具调用' })
   } catch (cause) {
-    const error = probeFailure(cause, timedOut) as Error & { status?: number; code?: string };
-    // The model talked, just not in the tool-call shape. That is chat-only, and
-    // the round it did answer with is evidence the conversation works.
-    if (formatUnsupported(error))
-      return finish({ health: 'ok', kind: 'OK', chatOnly: true, detail: '可用 · 仅对话（不支持工具调用）' });
-    const classification = classifyFailure(error.status, error.message);
-    return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false,
-      detail: timedOut ? `探测超时（${Math.round(timeoutMs / 1000)}s）` : error.message });
+    const error = probeFailure(cause, timedOut) as Error & { status?: number; code?: string }
+    toolsMs = Date.now() - toolsStart
+    // Three outcomes all mean "this model talks, but not in the tool shape":
+    // a format the model cannot produce, prose where an action was asked for,
+    // and a model that tried to run the action locally. Only the plain round
+    // below can tell a usable chat model from a model that refuses both.
+    const chatCandidate = formatUnsupported(error) || error.code === 'no_action' || error.code === 'native_tool_activity'
+    if (chatCandidate && !timedOut) {
+      const textStart = Date.now()
+      try {
+        await send({ model: model.id, messages: [{ role: 'user', content: 'Reply only OK.' }] })
+        const textMs = Date.now() - textStart
+        return finish({ health: 'ok', kind: 'OK', chatOnly: true, toolsMs, textMs,
+          detail: '可用 · 仅对话（不支持工具调用）' })
+      } catch (textCause) {
+        const textError = probeFailure(textCause, timedOut) as Error & { status?: number }
+        const classification = classifyFailure(textError.status, textError.message)
+        return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false, toolsMs,
+          textMs: Date.now() - textStart, detail: `纯文本也失败：${textError.message}` })
+      }
+    }
+    const classification = classifyFailure(error.status, error.message)
+    return finish({ health: healthFor(classification.kind), kind: classification.kind, chatOnly: false, toolsMs,
+      detail: timedOut ? `探测超时（${Math.round(timeoutMs / 1000)}s）` : error.message })
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer)
   }
+}
+
+/**
+ * Read the upstream's own error code out of a failed proxy response.
+ *
+ * The local proxy answers `{"error":{"message":…,"code":…}}`, and that code is
+ * what distinguishes a chat-shaped refusal from a genuine outage.
+ */
+function upstreamCode(body: string): string {
+  const parsed = errorBody(body);
+  return parsed?.code ?? 'model_error';
+}
+
+function upstreamMessage(body: string): string | undefined {
+  return errorBody(body)?.message;
+}
+
+function errorBody(body: string): { message?: string; code?: string } | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown; code?: unknown };
+    const error = parsed.error && typeof parsed.error === 'object' ? parsed.error as Record<string, unknown> : parsed;
+    return {
+      ...(typeof error.message === 'string' ? { message: error.message } : {}),
+      ...(typeof error.code === 'string' ? { code: error.code } : {}),
+    };
+  } catch { return undefined; }
 }
 /** Probe every model with a bounded, paced worker pool, reporting progress as it goes. */
 export async function probeAll(
