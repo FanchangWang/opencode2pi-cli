@@ -43,7 +43,9 @@ omp 进程
    且必须在本地服务 `listen` 之后拿真实 `baseUrl` 再注册。
 
 2. **重复注册同名 provider 会整体替换该 provider 的全部模型**——这是探测结论写回
-   `supportsTools: false` 的机制（`applyProvider` 再调一次即可）。不是"合并"。
+   `supportsTools: false` 和过滤生效的**唯一**机制（`index.ts` 的 `publishRoster()`
+   再调一次即可）。不是"合并"。但 `models` 为空数组时宿主整段跳过（`model-registry.ts:3205`），
+   所以隐藏完全部模型时要 warn 而不是假装生效。
 
 3. **不要注册 `fetchDynamicModels`**。模型表在启动时从本地 opencode 目录读出，
    宿主 24h 动态缓存只会把它藏起来。

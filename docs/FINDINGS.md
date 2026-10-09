@@ -15,9 +15,14 @@
 | 同名 provider **重复注册 = 整体替换全部模型**，随后失效该 provider 的缓存 | `config/model-registry.ts:3227-3228`、`:3258`、`:3273` |
 | `supportsTools` 会被自定义模型构造器读取并落到模型上 | `config/custom-models.ts:90`、`:125-136` |
 | 但扩展侧 `ProviderModelConfig`（`extensibility/extensions/types.ts:1750-1777`）**没有声明该字段** | 同上 |
+| 但 `config.models` **为空数组时这一段整体被跳过**，宿主保留原列表 | `config/model-registry.ts:3205` |
+| 隐藏模型只能靠"再注册一次 + 传更少的 models"，没有别的通道能到达 `/model` | 同上；`/model` 读的是注册表当前值 |
 
-**结论**：工厂必须 async；探测写回靠"再注册一次"，不需要别的通道；
+**结论**：工厂必须 async；探测写回与过滤生效靠"再注册一次"，不需要别的通道；
 `supportsTools` 需要自己补声明（`src/provider.ts` 的 `ProviderModelDefinition`）。
+两条推论曾经各造成一个真故障：过滤全部模型时列表纹丝不动（空数组被跳过），以及
+过滤选择在重新选中同一项时被判为"没变化"而不再注册——重选恰恰是用户从旧列表里
+脱身的唯一手段。**过滤隐藏完所有模型时要显式 warn，不能假装生效。**
 
 ## 2. `omp models` 会列出扩展注册的 provider
 

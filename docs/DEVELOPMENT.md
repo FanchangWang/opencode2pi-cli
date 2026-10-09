@@ -98,18 +98,29 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 - `status` 展示 store 里最近一次探测的结论，**只对从未探测过的模型（含目录新增的）当场补测**；
   超过 6 小时的结论只标注 `（已过期）` 并提醒跑 `probe`，不自动重测——全量探测要几分钟真实
   推理，是用户的调用。`probe` 才做全量重探并询问过滤。
-- 探测结束若 `chatOnly` 变化，`runtime-host.publishChatOnly()` 返回 true，
-  触发 `refreshProvider()` 重新注册 provider，把 `supportsTools: false` 写回注册表。
+- 探测结束有两处结论要写回注册表：`chatOnly`（`supportsTools: false`）与隐藏集。
+  `publishChatOnly()` / `publishHealth()` 都返回"注册表里的列表是否真的变了"，
+  任一为真就 `refreshProvider()`。
 
 ## 7. 谁来决定隐藏（`filters.ts`）
 
 默认一个都不隐藏。探测结束后弹一次选择（`/opencode2pi-cli filter` 可随时改），存进
-`<dataDir>/filters.json`，`publishFilters` 重算隐藏集并触发一次 `registerProvider`。
+`<dataDir>/filters.json`。
 
 可隐藏的失败只有 `MODEL_GONE` / `REGION_BLOCKED` / `REQUEST_REJECTED` / `UPSTREAM`——
 这四类是模型自己的问题。**`RATE_LIMIT` 与 `RUNTIME_MISSING` 永不可隐藏**：
 实测同一分钟里一个模型 429、邻居全部 200；本地服务没起来时更没有任何模型该被隐藏。
 隐藏只影响注册表里的模型行，`status` 仍然列出全部。
+
+隐藏集由 `runtime-host` 单点推导（`hiddenFromStore`），**只有一处**：启动时按
+`filters.json` + `health.json` 算出来，改过滤时重算，探测后按新判决重算。
+两处曾经各错一次：启动只读了开关没推导隐藏集（注册的是全量列表，却报告"过滤已生效"），
+以及重选同一项时被判为"没变化"而不再注册。
+
+写回注册表的唯一通道是 `index.ts` 的 `publishRoster()`：`registerProvider` 传同名
+provider 会整体替换它的模型列表，这是唯一能到达 `/model` 的机制。**但传空数组会被
+宿主整段跳过**（`model-registry.ts:3205`），所以隐藏完全部模型时它会 warn 而不是
+假装生效。
 
 ## 8. 失败分类（`errors.ts`）
 

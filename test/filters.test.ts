@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import type { CatalogModel } from '../src/backend.ts';
-import { DEFAULT_FILTERS, hiddenFromStore, hiddenModels, sameFilters, type ProbeFilters } from '../src/filters.ts';
+import { DEFAULT_FILTERS, hiddenChanged, hiddenFromStore, hiddenModels, type ProbeFilters } from '../src/filters.ts'
 import type { HealthStore, ProbeResult } from '../src/health.ts';
 import { toProviderModels } from '../src/provider.ts';
 
@@ -49,9 +49,15 @@ test('the stored store yields the same answer as a fresh sweep', () => {
   expect([...hiddenFromStore(store, FAILED_TOO)]).toEqual(['oc-a']);
 });
 
-test('filters compare by value, so an unchanged selection is recognised', () => {
-  expect(sameFilters(ALL_OFF, { hideRegionBlocked: false, hideFailed: false })).toBe(true);
-  expect(sameFilters(ALL_OFF, REGION_ONLY)).toBe(false);
+test('the roster is judged by what it hides, not by which switches moved', () => {
+  // `/model` shows the list that was last registered. Re-picking the option
+  // already in force moves no switch, yet it is the only way a user can get a
+  // registry that predates their choice rewritten — so "same filters" must not
+  // be able to answer "nothing to do".
+  expect(hiddenChanged(new Set(['oc-a']), hiddenFromStore({}, FAILED_TOO))).toBe(true);
+  expect(hiddenChanged(new Set<string>(), hiddenFromStore({}, FAILED_TOO))).toBe(false);
+  expect(hiddenChanged(new Set(['oc-a']), new Set(['oc-b']))).toBe(true);
+  expect(hiddenChanged(new Set(['oc-a']), new Set(['oc-a']))).toBe(false);
 });
 
 test('a hidden id leaves the registered model list, the rest are untouched', () => {

@@ -101,8 +101,11 @@ async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandCont
     ctx.ui.notify(resultLine(result, done, total))
   })
   ctx.ui.setWorkingMessage()
-  publishHealth(await saveHealth(results))
-  if (publishChatOnly(new Set(results.filter(result => result.chatOnly).map(result => result.modelId))))
+  // Two verdicts reach the registry through the model rows: a model that cannot
+  // carry tool calls, and a model the user's filters now hide. Both need the
+  // provider rewritten, or `/model` keeps showing the list from before the probe.
+  const rosterMoved = publishHealth(await saveHealth(results))
+  if (rosterMoved || publishChatOnly(new Set(results.filter(result => result.chatOnly).map(result => result.modelId))))
     refreshProvider()
   return results
 }
@@ -217,12 +220,16 @@ async function chooseFilters(ctx: ExtensionCommandContext): Promise<void> {
         : undefined
   if (!next) return
   await saveFilters(next)
-  const changed = publishFilters(next)
-  if (changed) refreshProvider()
+  publishFilters(next)
+  // Always re-register: that call is what replaces the whole model list, and it
+  // is cheap. Deciding to skip it meant deciding whether the registry already
+  // matched, and getting that wrong is how `/model` kept showing models the user
+  // had just hidden.
+  refreshProvider()
   const hidden = state().hidden
-  ctx.ui.notify(changed
-    ? `已更新过滤：当前隐藏 ${hidden.size} 个模型（/model 与 --model 里不再出现）`
-    : '过滤设置未变化。')
+  ctx.ui.notify(hidden.size
+    ? `过滤已生效：隐藏 ${hidden.size} 个模型（${[...hidden].join(', ')}），/model 与 --model 里不再出现`
+    : '当前没有任何模型被隐藏（探测结论里还没有符合条件的模型）。')
 }
 
 

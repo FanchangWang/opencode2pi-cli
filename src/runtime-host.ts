@@ -5,7 +5,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { Backend, CatalogModel } from './backend.ts';
 import { atomicWrite } from './atomic.ts';
 import { MODEL_PREFIX } from './backend.ts';
-import { DEFAULT_FILTERS, hiddenFromStore, loadFilters, sameFilters, type ProbeFilters } from './filters.ts';
+import { DEFAULT_FILTERS, hiddenChanged, hiddenFromStore, loadFilters, type ProbeFilters } from './filters.ts';
 import { loadHealth, type HealthStore } from './health.ts';
 import { resolveDataDirectory } from './platform.ts';
 import { killTree, locateOpencode, openLog, startBackend, type BackendRuntime } from './runtime.ts';
@@ -108,14 +108,21 @@ export function serveAlive(): boolean {
 }
 
 /**
- * Health records, published so `doctor` and `status` read one source of truth.
+ * Health records, published so `doctor` and `status` read one source of truth,
+ * and report whether the roster moved as a result.
  *
  * The hidden set is recomputed here rather than at each call site: it is a
  * function of health and filters only, and deriving it in one place is what
- * keeps "quota never hides a model" true everywhere.
+ * keeps "quota never hides a model" true everywhere. A probe that turns a
+ * verdict into one the user's filters hide changes the model list, so the
+ * change has to be reported — the registry only ever learns what a
+ * `registerProvider` call told it.
  */
-export function publishHealth(health: HealthStore): void {
-  update({ health, hidden: hiddenFromStore(health, current.filters) });
+export function publishHealth(health: HealthStore): boolean {
+  const hidden = hiddenFromStore(health, current.filters)
+  const changed = hiddenChanged(current.hidden, hidden)
+  update({ health, hidden })
+  return changed
 }
 
 /**
@@ -133,16 +140,17 @@ export function publishChatOnly(chatOnly: ReadonlySet<string>): boolean {
 }
 
 /**
- * Adopt the user's filter choice, and report whether the roster changed.
+ * Adopt the user's filter choice.
  *
- * Nothing here decides anything: the caller has already asked, and this only
- * records the answer and recomputes what it hides.
+ * The caller re-registers the provider unconditionally afterwards: that call is
+ * what replaces the model list, and deciding to skip it meant deciding whether
+ * the registry already matched — a comparison that answered "unchanged" while
+ * `/model` went on showing every model the user had just hidden.
  */
-export function publishFilters(filters: ProbeFilters): boolean {
-  const changed = !sameFilters(current.filters, filters);
-  update({ filters, hidden: hiddenFromStore(current.health, filters) });
-  return changed;
+export function publishFilters(filters: ProbeFilters): void {
+  update({ filters, hidden: hiddenFromStore(current.health, filters) })
 }
+
 
 let publishProvider: (() => void) | undefined;
 
@@ -244,8 +252,14 @@ async function boot_(): Promise<void> {
   const dataDir = resolveDataDirectory();
   await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
   // The stored filter choice is part of what the roster is, so it is read before
-  // the provider is registered rather than applied on the next probe.
-  update({ filters: await loadFilters(), health: await loadHealth() });
+  // the provider is registered rather than applied on the next probe — and the
+  // hidden set is derived here, not left at its empty default. Loading the
+  // switches without deriving the set registers the full roster and then reports
+  // the filters as if they were in force, which is how `/model` kept showing
+  // models the user had just hidden.
+  const filters = await loadFilters()
+  const health = await loadHealth()
+  update({ filters, health, hidden: hiddenFromStore(health, filters) })
 
   update({ phase: 'starting', message: '正在检查 OpenCode' });
 

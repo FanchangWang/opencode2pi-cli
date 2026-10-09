@@ -72,7 +72,7 @@ test('only a main session shuts the chain down', async () => {
     apiKey: () => 'test-key',
     killOnExit: () => {},
     onProviderRefresh: () => {},
-    state: () => ({ phase: 'ready', message: 'ok', endpoint: 'http://127.0.0.1:41980/v1', port: 41980, opencodeVersion: '2.0.23', v2: true, catalog: [{ id: 'oc-a', name: 'A' }], health: {}, chatOnly: new Set<string>() }),
+    state: () => ({ phase: 'ready', message: 'ok', endpoint: 'http://127.0.0.1:41980/v1', port: 41980, opencodeVersion: '2.0.23', v2: true, catalog: [{ id: 'oc-a', name: 'A' }], health: {}, chatOnly: new Set<string>(), filters: { hideRegionBlocked: false, hideFailed: false }, hidden: new Set<string>() }),
   }));
 
   // Loaded after the mock is installed: a static import would evaluate the real
@@ -103,4 +103,43 @@ test('only a main session shuts the chain down', async () => {
   await start({}, notify);
   expect(notifications[0]).toContain('已就绪');
   expect(notifications[0]).toContain('1 个免费模型');
+});
+
+test('a hidden model is absent from every registration the host sees', async () => {
+  // `/model` shows the last thing `registerProvider` was told. The hidden set
+  // travels into that call and nowhere else, so a roster registered with it is
+  // the only way a filter choice can reach the user at all.
+  const registered: { models: { id: string }[] }[] = [];
+  let refresh: (() => void) | undefined;
+  const current = {
+    phase: 'ready', message: 'ok', endpoint: 'http://127.0.0.1:41980/v1', port: 41980,
+    opencodeVersion: '2.0.23', v2: true, filters: { hideRegionBlocked: false, hideFailed: false },
+    catalog: [{ id: 'oc-a', name: 'A' }, { id: 'oc-b', name: 'B' }], health: {}, chatOnly: new Set<string>(),
+    hidden: new Set(['oc-b']),
+  };
+
+  mock.module('../src/runtime-host.ts', () => ({
+    acquire: async () => {},
+    release: async () => {},
+    apiKey: () => 'test-key',
+    killOnExit: () => {},
+    onProviderRefresh: (callback: () => void) => { refresh = callback; },
+    state: () => current,
+  }));
+
+  const { default: extension } = await import('../src/index.ts');
+  const pi = {
+    setLabel: () => {},
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    registerProvider: (_name: string, config: { models: { id: string }[] }) => registered.push(config),
+    registerCommand: () => {},
+    on: () => {},
+  };
+  await extension(pi as never);
+
+  // Re-registering is what a probe or a filter choice triggers; the hidden id
+  // must be gone from that second write too, not just the first.
+  refresh!();
+  expect(registered.length).toBe(2);
+  for (const config of registered) expect(config.models.map(model => model.id)).toEqual(['oc-a']);
 });

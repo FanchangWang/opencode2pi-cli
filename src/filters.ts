@@ -67,6 +67,19 @@ export function hiddenFromStore(store: HealthStore, filters: ProbeFilters): Read
   return hidden
 }
 
+/**
+ * Whether the roster the provider was registered with differs from the one the
+ * current filters produce.
+ *
+ * The switches are not the question. A user who re-picks the option already in
+ * force has changed no switch, yet the registry may still be holding the list
+ * from before the choice existed — comparing switches answered "no change" and
+ * left every model visible in `/model`.
+ */
+export function hiddenChanged(previous: ReadonlySet<string>, next: ReadonlySet<string>): boolean {
+  return previous.size !== next.size || [...next].some(id => !previous.has(id));
+}
+
 function storeFile(): string {
   return path.join(resolveDataDirectory(), 'filters.json')
 }
@@ -91,9 +104,4 @@ export async function saveFilters(filters: ProbeFilters): Promise<void> {
   } catch {
     // An unwritable filter file costs one re-selection, never a wrong roster.
   }
-}
-
-/** The two switches as one comparable value, for change detection. */
-export function sameFilters(a: ProbeFilters, b: ProbeFilters): boolean {
-  return a.hideFailed === b.hideFailed && a.hideRegionBlocked === b.hideRegionBlocked
 }
