@@ -93,8 +93,11 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
   一次给出合法动作调用、一次去执行本地工具。单次即降级会让一个能用的模型白丢工具。
 - 每次探测一次带工具的真实对话，单模型 60s 上限；并发 2、间隔 500ms
   （免费上游按模型计费，一次全放会挤掉自己的后续配额）。
-- 存储 `<dataDir>/health.json`，TTL 6 小时；一次成功清零计数；
+- 存储 `<dataDir>/health.json`（跨会话保留，供过滤集计算与跨次判死计数使用）；
   **只标注不隐藏**——模型永远留在目录里。
+- `status` 展示 store 里最近一次探测的结论，**只对从未探测过的模型（含目录新增的）当场补测**；
+  超过 6 小时的结论只标注 `（已过期）` 并提醒跑 `probe`，不自动重测——全量探测要几分钟真实
+  推理，是用户的调用。`probe` 才做全量重探并询问过滤。
 - 探测结束若 `chatOnly` 变化，`runtime-host.publishChatOnly()` 返回 true，
   触发 `refreshProvider()` 重新注册 provider，把 `supportsTools: false` 写回注册表。
 
@@ -156,7 +159,7 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free "用 bash 工具列出当前
 | `repair` | 完整走一遍「correction → translate → resend」，用假 `request` 驱动 |
 | `provider` | 免费判定（v1/v2 各四种淘汰条件）+ 逐字段投影 |
 | `errors` | 表驱动分类，含 401/403 的本地语义 |
-| `health` | 两次才判死、成功清零、TTL、剪枝、汇总顺序 |
+| `health` | 两次才判死、成功清零、剪枝、汇总顺序 |
 | `lifecycle` | 引用计数、失败不记忆、子代理不触发停机 |
 
 ## 12. 发布

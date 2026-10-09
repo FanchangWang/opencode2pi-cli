@@ -64,21 +64,31 @@ test('pruning drops every id the current roster no longer carries', () => {
   expect(Object.keys(pruneHealth(store, new Set(['oc-a'])))).toEqual(['oc-a']);
 });
 
-test('a verdict goes stale only after the TTL, and a missing one is stale at once', () => {
+test('a model the store says nothing about is not counted as a verdict', () => {
+  // `status` reports what the last probe found and prints "未探测" for the rest,
+  // so a missing record must stay outside the tally rather than becoming a
+  // state of its own the roster lines cannot produce.
+  expect(summarizeHealth([{ id: 'oc-a' }, { id: 'oc-b' }], mergeHealth({}, [result('oc-a', 'OK', 'ok')])))
+    .toBe('✅ 1');
+});
+
+test('a verdict goes stale after the TTL, and a missing one is stale at once', () => {
   const fresh = mergeHealth({}, [result('oc-a', 'OK', 'ok')])['oc-a']!;
   expect(isStale(fresh)).toBe(false);
   expect(isStale({ ...fresh, checkedAt: Date.now() - HEALTH_TTL_MS - 1 })).toBe(true);
+  // A model added to the catalog since the last sweep is the case `status`
+  // probes on the spot rather than reporting a gap.
   expect(isStale(undefined)).toBe(true);
 });
 
 test('the summary counts the roster as displayed, not the raw verdicts', () => {
-  const roster = [{ id: 'oc-a' }, { id: 'oc-b' }, { id: 'oc-c' }];
+  const roster = [{ id: 'oc-a' }, { id: 'oc-b' }];
   const store: HealthStore = {
     'oc-a': mergeHealth({}, [result('oc-a', 'OK', 'ok')])['oc-a']!,
     'oc-b': mergeHealth(mergeHealth({}, [result('oc-b', 'MODEL_GONE', 'flaky')]), [result('oc-b', 'MODEL_GONE', 'flaky')])['oc-b']!,
   };
 
-  expect(summarizeHealth(roster, store)).toBe('✅ 1  ❓ 1  ❌ 1');
+  expect(summarizeHealth(roster, store)).toBe('✅ 1  ❌ 1');
 });
 
 test('a region block is fatal on the first verdict, unlike a retired model', () => {
@@ -89,4 +99,12 @@ test('a region block is fatal on the first verdict, unlike a retired model', () 
   const store = mergeHealth({}, [result('oc-a', 'REGION_BLOCKED', 'dead')]);
   expect(store['oc-a']!.health).toBe('dead');
   expect(store['oc-a']!.terminalFailures).toBe(0);
+});
+
+test('an unclassified failure is a transient, not a separate fifth verdict', () => {
+  // A 401 from the local proxy is our own token mismatch, and an unrecognised
+  // upstream text is an unrecognised 5xx. Neither is evidence about the model,
+  // and neither may print as a state of its own in the roster.
+  expect(healthFor('UNKNOWN')).toBe('flaky');
+  expect(mergeHealth({}, [result('oc-a', 'UNKNOWN', 'flaky')])['oc-a']!.health).toBe('flaky');
 });

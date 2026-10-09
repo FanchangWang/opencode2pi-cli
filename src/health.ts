@@ -47,16 +47,25 @@ function delay(ms: number): Promise<void> {
   return promise
 }
 
-/** How long a stored verdict is shown before it is refreshed. */
+/**
+ * How long a verdict may be shown before `status` stops treating it as current.
+ *
+ * Six hours, not a day: the free pool churns on the order of hours (measured
+ * 2026-10-06 — one model read ✅ and a neighbour ❌ within the same session), so
+ * a day-old row is a memory of a roster that no longer exists. Six also keeps a
+ * working day covered without nagging, and expiry is a reminder rather than a
+ * silent re-probe: a sweep costs minutes of real inference, which is the user's
+ * call to make via `probe`, not `status`'s.
+ */
 export const HEALTH_TTL_MS = 6 * 60 * 60 * 1000
 
-export type ModelHealth = 'ok' | 'flaky' | 'dead' | 'unknown' | 'limited'
+/** A verdict is always about the model and keeps the upstream's words in `detail`. */
+export type ModelHealth = 'ok' | 'flaky' | 'dead' | 'limited'
 
 export const HEALTH_MARK: Readonly<Record<ModelHealth, string>> = {
   ok: '✅',
   flaky: '⚠️',
   dead: '❌',
-  unknown: '❓',
   limited: '🚧',
 }
 
@@ -96,12 +105,22 @@ export function healthFor(kind: UpstreamFailure | 'OK'): ModelHealth {
       return 'dead'
     case 'RATE_LIMIT':
       return 'limited'
+    // `RUNTIME_MISSING` is limited rather than flaky because it says nothing about
+    // any model at all — the local server was not reachable, so no model was asked.
     case 'RUNTIME_MISSING':
       return 'limited'
+    // A request the upstream rejected is the model refusing this particular
+    // shape, which is evidence about the round, not about the model.
+    case 'REQUEST_REJECTED':
+      return 'flaky'
     case 'UPSTREAM':
       return 'flaky'
-    default:
-      return 'unknown'
+    // An unclassified failure carries no more evidence against the model than a
+    // 5xx does — the classifier simply did not recognize the text. Giving it a
+    // verdict of its own invented a fifth state that only ever showed up in
+    // `status`, for failures that are transient like any other.
+    case 'UNKNOWN':
+      return 'flaky'
   }
 }
 
@@ -282,7 +301,6 @@ export async function loadHealth(): Promise<HealthStore> {
         record.health !== 'ok' &&
         record.health !== 'flaky' &&
         record.health !== 'dead' &&
-        record.health !== 'unknown' &&
         record.health !== 'limited'
       )
         continue
@@ -366,23 +384,34 @@ export async function saveHealth(results: readonly ProbeResult[]): Promise<Healt
   return merged
 }
 
+/**
+ * Whether a verdict still describes the model as it is now.
+ *
+ * A missing record is stale by definition: there is nothing to show but the
+ * fact of the gap, which is what makes `status` go and probe those models.
+ */
 export function isStale(record: HealthRecord | undefined): boolean {
   return record === undefined || Date.now() - record.checkedAt > HEALTH_TTL_MS
 }
 
 /** Canonical order, so the summary reads the same way on every run. */
-const VERDICT_ORDER: readonly ModelHealth[] = ['ok', 'flaky', 'limited', 'unknown', 'dead']
+const VERDICT_ORDER: readonly ModelHealth[] = ['ok', 'flaky', 'limited', 'dead']
 
 /**
  * Summarize the roster's verdicts as they are *displayed*.
  *
  * The store, never the raw probe results, is the source of truth here: the second
  * consecutive `MODEL_GONE` promotes ⚠️ to ❌ in {@link mergeHealth} only, so
- * counting raw results would contradict the lines right below it.
+ * counting raw results would contradict the lines right below it. A model with no
+ * record is not a fifth verdict and is not counted as one — its roster line says
+ * "未探测", which is a statement about our coverage, not about the model.
  */
 export function summarizeHealth(roster: readonly { readonly id: string }[], store: HealthStore): string {
-  const counts: Record<ModelHealth, number> = { ok: 0, flaky: 0, dead: 0, unknown: 0, limited: 0 }
-  for (const model of roster) counts[store[model.id]?.health ?? 'unknown']++
+  const counts: Record<ModelHealth, number> = { ok: 0, flaky: 0, dead: 0, limited: 0 }
+  for (const model of roster) {
+    const health = store[model.id]?.health
+    if (health) counts[health]++
+  }
   return VERDICT_ORDER.filter((health) => counts[health] > 0)
     .map((health) => `${HEALTH_MARK[health]} ${counts[health]}`)
     .join('  ')

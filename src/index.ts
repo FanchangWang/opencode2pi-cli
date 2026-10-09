@@ -42,7 +42,7 @@ export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
   }
 
   pi.registerCommand(COMMAND, {
-    description: `${COMMAND} 诊断：doctor 检查本地链路，status/probe 查看模型健康`,
+    description: `${COMMAND} 诊断：doctor 检查本地链路，status 显示上次探测结果，probe 重新探测全部模型，filter 设置隐藏规则`,
     handler: handleCommand,
   })
 

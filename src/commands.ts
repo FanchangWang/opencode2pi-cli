@@ -7,10 +7,10 @@
  *
  *   doctor — five links (CLI, serve, proxy, catalog, inference) that fail
  *            independently, so each is named separately instead of as one error.
- *   status — per-model health, annotated onto the roster and never used to
- *            remove a model from it.
- *   probe  — force a fresh sweep, and write chat-only verdicts back into the
- *            model registry as `supportsTools: false`.
+ *   status — report the last sweep: models it has never asked about are probed
+ *            on the spot, and aged verdicts are flagged rather than re-run.
+ *   probe  — sweep the whole roster, write chat-only verdicts back into the
+ *            model registry as `supportsTools: false`, and ask about hiding.
  */
 
 import type { ExtensionCommandContext } from '@oh-my-pi/pi-coding-agent'
@@ -20,13 +20,13 @@ import { runDoctor } from './doctor.ts'
 import { saveFilters, type ProbeFilters } from './filters.ts'
 import {
   HEALTH_MARK,
+  HEALTH_TTL_MS,
   isStale,
   loadHealth,
   probeAll,
   saveHealth,
   summarizeHealth,
   type HealthRecord,
-  type ModelHealth,
   type ProbeResult,
 } from './health.ts'
 import { apiKey, publishChatOnly, publishFilters, publishHealth, refreshProvider, state } from './runtime-host.ts'
@@ -44,18 +44,26 @@ export const COMMAND = 'opencode2pi-cli';
 const USAGE = `用法：/${COMMAND} <doctor|status|probe|filter>`;
 
 const AGE = (record: HealthRecord): string => {
-  const minutes = Math.round((Date.now() - record.checkedAt) / 60_000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
+  const minutes = Math.max(0, Math.round((Date.now() - record.checkedAt) / 60_000))
+  if (minutes < 1) return '刚刚探测'
+  if (minutes < 60) return `${minutes} 分钟前探测`
   const hours = Math.round(minutes / 60)
-  return hours < 24 ? `${hours} 小时前` : `${Math.round(hours / 24)} 天前`
+  return hours < 24 ? `${hours} 小时前探测` : `${Math.round(hours / 24)} 天前探测`
 }
 
-/** Render one roster line. Every model appears, whatever its verdict. */
+/**
+ * Render one roster line. Every model appears, whatever its verdict, and every
+ * line carries the reason: a mark alone leaves the reader to guess whether
+ * `⚠️` means a 503, a 400 or a timeout, and those have different remedies.
+ *
+ * A model we hold no record for says so in words instead of borrowing a verdict
+ * mark. `·` is not one of the four verdicts — it says we have not asked, which is
+ * a fact about the last probe, not about the model.
+ */
 function rosterLine(model: CatalogModel, record: HealthRecord | undefined): string {
-  const health: ModelHealth = record?.health ?? 'unknown'
-  const suffix = record ? ` · ${AGE(record)}` : ''
-  return `${HEALTH_MARK[health]} ${model.id} — ${model.name}${suffix}`
+  if (!record) return `· ${model.id} — ${model.name} · 未探测`
+  const stale = isStale(record) ? '（已过期）' : ''
+  return `${HEALTH_MARK[record.health]} ${model.id} — ${model.name} · ${record.detail} · ${AGE(record)}${stale}`
 }
 
 /**
@@ -99,36 +107,80 @@ async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandCont
   return results
 }
 
-async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Promise<void> {
+/**
+ * Report the roster, probing only what we have never asked about.
+ *
+ * `status` answers "what does the last probe say", and the store is that answer:
+ * re-probing the whole roster on every `status` would burn minutes of real
+ * inference to redraw a picture the user already has. Two cases are exceptions,
+ * because they are gaps rather than pictures — a model that has never been probed
+ * (which includes every model added to the catalog since the last sweep) gets
+ * probed right here, because showing "未探测" for something we could have asked
+ * about is a worse answer than asking. A verdict that has merely aged out is not
+ * a gap: it is a real result that has stopped being current, so it is reported
+ * with its age and one line telling the user that `probe` exists. Re-probing on
+ * age would make `status` a `probe` with extra steps, which is what `probe` is for.
+ */
+async function showStatus(ctx: ExtensionCommandContext): Promise<void> {
   const current = state()
   if (current.phase !== 'ready') {
     ctx.ui.notify(`${COMMAND} 未就绪（${current.message}）。用 /${COMMAND} doctor 查看详情。`, 'error')
     return
   }
+
   const roster = current.catalog
   const stored = current.health && Object.keys(current.health).length ? current.health : await loadHealth()
-  const stale = roster.some(model => isStale(stored[model.id]))
+  const unprobed = roster.filter(model => !stored[model.id])
+  const aged = roster.filter(model => stored[model.id] && isStale(stored[model.id]))
 
-  if (!runProbe && !stale) {
-    ctx.ui.notify(`${COMMAND} 模型状态：\n${roster.map(model => rosterLine(model, stored[model.id])).join('\n')}${hiddenNote()}`)
-    return
+  let chatOnly: readonly ProbeResult[] = []
+  if (unprobed.length) {
+    if (!ctx.hasUI) {
+      // Print mode cannot render a progress indicator for minutes at a time; say
+      // so rather than hang a headless run on a dialog nobody can see.
+      ctx.ui.notify(`有 ${unprobed.length} 个模型从未探测（${unprobed.map(model => model.id).join(', ')}）。`
+        + '逐模型探测需要交互式 TUI，请在 TUI 里运行 status 或 probe。', 'warning')
+    } else {
+      ctx.ui.notify(`正在探测 ${unprobed.length} 个尚未探测过的模型（${unprobed.map(model => model.id).join(', ')}）…`)
+      chatOnly = await sweep(unprobed, ctx)
+    }
   }
 
+  const merged = state().health
+  const fresh = chatOnly.filter(result => result.chatOnly).map(result => result.modelId)
+  ctx.ui.notify(`模型状态：${summarizeHealth(roster, merged)}\n${roster.map(model => rosterLine(model, merged[model.id])).join('\n')}`
+    + (fresh.length ? `\n仅对话模型（已写回为不支持工具）：${fresh.join(', ')}` : '')
+    + hiddenNote()
+    + staleNote(aged.map(model => model.id)))
+}
+
+/** A trailing line pointing at `probe` when the report it just showed has aged. */
+function staleNote(aged: readonly string[]): string {
+  if (!aged.length) return ''
+  return `\n⚠️ ${aged.length} 个模型的结果已超过 ${HEALTH_TTL_MS / 3_600_000} 小时（${aged.join(', ')}）。`
+    + `免费池波动很快，运行 /${COMMAND} probe 重新探测全部模型。`
+}
+
+/** Probe the whole roster, report it, and ask about hiding. */
+async function runProbe(ctx: ExtensionCommandContext): Promise<void> {
+  const current = state()
+  if (current.phase !== 'ready') {
+    ctx.ui.notify(`${COMMAND} 未就绪（${current.message}）。用 /${COMMAND} doctor 查看详情。`, 'error')
+    return
+  }
   if (!ctx.hasUI) {
-    // Print mode cannot render a progress indicator for minutes at a time; say so
-    // rather than hang a headless run on a dialog nobody can see.
     ctx.ui.notify('逐模型探测需要交互式 TUI（打印模式下不可用）。')
     return
   }
 
+  const roster = current.catalog
   ctx.ui.notify(`正在探测 ${roster.length} 个模型（每个模型一条结果，陆续输出；全部结束后给出汇总与完整列表）…`)
   const results = await sweep(roster, ctx)
   const merged = state().health
-  const summary = summarizeHealth(roster, merged)
   const chatOnly = results.filter(result => result.chatOnly).map(result => result.modelId)
   // The per-model lines stream in completion order; this closing block is the
-  // canonical snapshot — every model, in catalog order, with its verdict.
-  ctx.ui.notify(`探测完成：${summary}\n${roster.map(model => rosterLine(model, merged[model.id])).join('\n')}`
+  // canonical snapshot — every model, in catalog order, with verdict and reason.
+  ctx.ui.notify(`探测完成：${summarizeHealth(roster, merged)}\n${roster.map(model => rosterLine(model, merged[model.id])).join('\n')}`
     + (chatOnly.length ? `\n仅对话模型（已写回为不支持工具）：${chatOnly.join(', ')}` : '')
     + hiddenNote())
   // The verdicts are only useful if they can change something, and whether to
@@ -181,13 +233,15 @@ async function showMenu(ctx: ExtensionCommandContext): Promise<void> {
   }
   const choice = await ctx.ui.select(COMMAND, [
     { label: 'doctor', description: '逐项检查 CLI、serve、本地代理、模型目录与一次真实推理' },
-    { label: 'status', description: '查看模型健康状态（必要时自动重新探测）' },
+    { label: 'status', description: '显示上次探测的结果；从未探测过的模型会自动补测' },
     { label: 'probe', description: '重新探测全部模型，并把仅对话结论写回模型列表' },
+    { label: 'filter', description: '选择要在 /model 里隐藏哪些模型（默认一个都不隐藏）' },
   ])
   // `select` resolves to the chosen label, so the labels double as the keys.
   if (choice === 'doctor') await runDoctorCommand(ctx)
-  else if (choice === 'status') await showStatus(ctx, false)
-  else if (choice === 'probe') await showStatus(ctx, true)
+  else if (choice === 'status') await showStatus(ctx)
+  else if (choice === 'probe') await runProbe(ctx)
+  else if (choice === 'filter') await chooseFilters(ctx)
 }
 
 async function runDoctorCommand(ctx: ExtensionCommandContext): Promise<void> {
@@ -199,8 +253,8 @@ async function runDoctorCommand(ctx: ExtensionCommandContext): Promise<void> {
 export async function handleCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
   const sub = args.trim().split(/\s+/)[0]?.toLowerCase() ?? ''
   if (sub === 'doctor') return runDoctorCommand(ctx)
-  if (sub === 'status') return showStatus(ctx, false)
-  if (sub === 'probe') return showStatus(ctx, true)
+  if (sub === 'status') return showStatus(ctx)
+  if (sub === 'probe') return runProbe(ctx)
   if (sub === 'filter') return chooseFilters(ctx)
   if (sub === '') return showMenu(ctx)
   ctx.ui.notify(USAGE, 'warning')

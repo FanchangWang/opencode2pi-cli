@@ -78,6 +78,10 @@ omp 进程
 11. **工具轮最多试两次才判定"仅对话"。** 实测 `oc-big-pickle` 在相邻两轮探测里一次给出
     合法动作调用、一次去执行本地工具；单次即降级会让能用的模型白丢工具。
 
+12. **`status` 读 store，不重探；只有它从没有记录过的模型是当场补测。** 结论超过 6 小时
+    （`HEALTH_TTL_MS`）只在行尾标 `（已过期）` 并提醒跑 `probe`——全量探测要几分钟真实
+    推理，该由用户发起。`status` 与 `probe` 的差别只在事后动作：只有 `probe` 询问过滤。
+
 ---
 
 ## 项目地图
@@ -137,7 +141,8 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 
 （用户自己可能开着 `opencode serve --service`，那是无关进程。）
 
-`/opencode2pi-cli doctor|status|probe` 需要交互式 TUI；打印模式下 probe 不可用。
+`/opencode2pi-cli doctor` 与探测（`status` 的补测、`probe`）需要交互式 TUI；打印模式下
+`status` 照常打印已有结论并点名哪些模型没探测过，`probe` 直接提示不可用。
 要无头验证 doctor，直接 `import { runDoctor } from './src/doctor.ts'` 跑即可。
 
 ---
