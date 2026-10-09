@@ -5,7 +5,8 @@ import type { ChildProcess } from 'node:child_process';
 import type { Backend, CatalogModel } from './backend.ts';
 import { atomicWrite } from './atomic.ts';
 import { MODEL_PREFIX } from './backend.ts';
-import type { HealthStore } from './health.ts';
+import { DEFAULT_FILTERS, hiddenFromStore, loadFilters, sameFilters, type ProbeFilters } from './filters.ts';
+import { loadHealth, type HealthStore } from './health.ts';
 import { resolveDataDirectory } from './platform.ts';
 import { killTree, locateOpencode, openLog, startBackend, type BackendRuntime } from './runtime.ts';
 import { createServer, type LocalProxyServer } from './server.ts';
@@ -32,6 +33,10 @@ export interface RuntimeState {
   readonly catalog: readonly CatalogModel[];
   readonly health: HealthStore;
   readonly chatOnly: ReadonlySet<string>;
+  /** What the user chose to keep out of the roster. Empty by default. */
+  readonly filters: ProbeFilters;
+  /** Ids the current filters remove from the roster. */
+  readonly hidden: ReadonlySet<string>;
 }
 
 interface Runtime {
@@ -58,7 +63,10 @@ let current: RuntimeState = {
   catalog: [],
   health: {},
   chatOnly: new Set(),
+  filters: DEFAULT_FILTERS,
+  hidden: new Set(),
 };
+
 
 /** Publish a state change to every subscriber (doctor, status, the TUI). */
 function update(patch: Partial<RuntimeState>): void {
@@ -99,9 +107,15 @@ export function serveAlive(): boolean {
   return runtime !== undefined && runtime.child.exitCode === null && runtime.child.signalCode === null;
 }
 
-/** Health records, published so `doctor` and `status` read one source of truth. */
+/**
+ * Health records, published so `doctor` and `status` read one source of truth.
+ *
+ * The hidden set is recomputed here rather than at each call site: it is a
+ * function of health and filters only, and deriving it in one place is what
+ * keeps "quota never hides a model" true everywhere.
+ */
 export function publishHealth(health: HealthStore): void {
-  update({ health });
+  update({ health, hidden: hiddenFromStore(health, current.filters) });
 }
 
 /**
@@ -115,6 +129,18 @@ export function publishChatOnly(chatOnly: ReadonlySet<string>): boolean {
   const changed = current.chatOnly.size !== chatOnly.size
     || [...chatOnly].some(id => !current.chatOnly.has(id));
   update({ chatOnly });
+  return changed;
+}
+
+/**
+ * Adopt the user's filter choice, and report whether the roster changed.
+ *
+ * Nothing here decides anything: the caller has already asked, and this only
+ * records the answer and recomputes what it hides.
+ */
+export function publishFilters(filters: ProbeFilters): boolean {
+  const changed = !sameFilters(current.filters, filters);
+  update({ filters, hidden: hiddenFromStore(current.health, filters) });
   return changed;
 }
 
@@ -217,6 +243,9 @@ async function loadCatalog(backend: Backend, dataDir: string): Promise<CatalogMo
 async function boot_(): Promise<void> {
   const dataDir = resolveDataDirectory();
   await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+  // The stored filter choice is part of what the roster is, so it is read before
+  // the provider is registered rather than applied on the next probe.
+  update({ filters: await loadFilters(), health: await loadHealth() });
 
   update({ phase: 'starting', message: '正在检查 OpenCode' });
 

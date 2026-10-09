@@ -23,17 +23,18 @@ import { acquire, apiKey, killOnExit, onProviderRefresh, release, state } from '
 export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
   pi.setLabel('OpenCode Zen CLI')
 
-  // The provider is re-registered whenever a probe changes a model's tool support,
-  // so this callback is the single place that knows how to write the registry.
+  // The provider is re-registered whenever a probe changes a model's tool
+  // support or the user changes what to hide, so this callback is the single
+  // place that knows how to write the registry.
   onProviderRefresh(() => {
     const current = state()
-    applyProvider(pi, { endpoint: current.endpoint, key: apiKey(), catalog: current.catalog, chatOnly: current.chatOnly })
+    applyProvider(pi, { endpoint: current.endpoint, key: apiKey(), catalog: current.catalog, chatOnly: current.chatOnly, hidden: current.hidden })
   })
 
   try {
     await acquire()
     const current = state()
-    applyProvider(pi, { endpoint: current.endpoint, key: apiKey(), catalog: current.catalog, chatOnly: current.chatOnly })
+    applyProvider(pi, { endpoint: current.endpoint, key: apiKey(), catalog: current.catalog, chatOnly: current.chatOnly, hidden: current.hidden })
   } catch (error) {
     // A broken chain must not take omp down with it: omp starts normally, just
     // without this provider, and the user is pointed at the diagnostic command.

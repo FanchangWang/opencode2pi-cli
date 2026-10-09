@@ -67,6 +67,7 @@ jobs:
             package/src/commands.ts \
             package/src/doctor.ts \
             package/src/errors.ts \
+            package/src/filters.ts \
             package/src/health.ts \
             package/src/platform.ts \
             package/src/probe.ts \

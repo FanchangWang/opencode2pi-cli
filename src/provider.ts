@@ -40,8 +40,8 @@ export interface ProviderModelDefinition extends ProviderModelConfig {
   supportsTools?: boolean;
 }
 
-export function toProviderModels(catalog: readonly CatalogModel[], chatOnly: ReadonlySet<string> = new Set()): ProviderModelDefinition[] {
-  return catalog.map(m => {
+export function toProviderModels(catalog: readonly CatalogModel[], chatOnly: ReadonlySet<string> = new Set(), hidden: ReadonlySet<string> = new Set()): ProviderModelDefinition[] {
+  return catalog.filter(m => !hidden.has(m.id)).map(m => {
     const efforts = EFFORT_ORDER.filter(effort => Object.hasOwn(reasoningEfforts(m), effort));
     return {
       id: m.id,
@@ -63,6 +63,8 @@ export interface ApplyProviderInput {
   key: string;
   catalog: readonly CatalogModel[];
   chatOnly: ReadonlySet<string>;
+  /** Ids the user chose to keep out of the roster. Never applied on our own. */
+  hidden?: ReadonlySet<string>;
 }
 
 /**
@@ -75,12 +77,12 @@ export interface ApplyProviderInput {
  * No `fetchDynamicModels`: the catalog is read from the local OpenCode server at
  * boot, and the host's 24h dynamic-model cache would only ever hide it.
  */
-export function applyProvider(pi: ExtensionAPI, { endpoint, key, catalog, chatOnly }: ApplyProviderInput): void {
+export function applyProvider(pi: ExtensionAPI, { endpoint, key, catalog, chatOnly, hidden }: ApplyProviderInput): void {
   pi.registerProvider(PROVIDER, {
     baseUrl: endpoint,
     api: API,
     apiKey: key,
     authHeader: true,
-    models: toProviderModels(catalog, chatOnly),
+    models: toProviderModels(catalog, chatOnly, hidden),
   });
 }

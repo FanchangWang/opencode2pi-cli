@@ -71,7 +71,11 @@ omp 进程
    同理，`RATE_LIMIT` 不是对模型的判决（上游按模型计费），单列 🚧。唯一的例外是
    `REGION_BLOCKED`：同一出口下地区封锁是确定性的，一次即判死。
 
-10. **工具轮最多试两次才判定"仅对话"。** 实测 `oc-big-pickle` 在相邻两轮探测里一次给出
+10. **隐藏模型必须由用户选择。** `filters.json` 里只有两个开关，都默认为关；
+    配额耗尽（`RATE_LIMIT`）与本地链路故障（`RUNTIME_MISSING`）**永远不隐藏任何模型**——
+    那是通道的状态。规则集中在 `src/filters.ts` 的 `MODEL_VERDICTS`，别在别处再写一遍。
+
+11. **工具轮最多试两次才判定"仅对话"。** 实测 `oc-big-pickle` 在相邻两轮探测里一次给出
     合法动作调用、一次去执行本地工具；单次即降级会让能用的模型白丢工具。
 
 ---
@@ -155,7 +159,7 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 - ❌ 写 `~/.omp/agent/models.yml`（这是本项目存在的核心区别）
 - ❌ 改用户的 `config.yml`（旧 `opencode-zen/...` 引用由用户自己迁移）
 - ❌ 把探测挪进启动路径
-- ❌ 用健康状态过滤模型列表（只标注，不隐藏）
+- ❌ **自动**用健康状态过滤模型列表（只标注；隐藏与否是用户的决定，由 `filter` 询问后落盘）
 - ❌ 把 API key 落盘（它只在内存里，随进程消失）
 - ❌ 在 `session_shutdown` 里漏掉 `kind === 'main'` 过滤
 - ❌ 重写 `backend.ts` 的协议分支（先读 FINDINGS.md）

@@ -139,3 +139,51 @@ Zen 直连有 `SHAPE_REJECTED` / `AUTH`（403/401 的几种来源），本机链
 `HTTP 403 · This model is not available in your country`——地区封锁来自 Zen 上游，
 经本地链路透传上来。最初的判断（本链路不存在地区封锁，因此删掉 `REGION_BLOCKED`）
 是错的，已加回：判定顺序里它排在最前，因为它和本地 403 撞同一个状态码。
+## 13. 免费名单复测（两条通道对照）
+
+同一批免费模型，两条通道各测一次，结论并不一致——这是"只标注不隐藏"这条规则的直接依据。
+
+| 模型 | Zen 直连（2026-10-08，opencode2pi） | 本地链路（2026-10-06，本项目） |
+| --- | --- | --- |
+| `big-pickle` / `mimo-v2.6-flash-free` / `nemotron-3.5-lightning-free` | ✅ 200 | ✅ |
+| `space-bunny-free` / `longcat-2.5-preview-free` / `ling-3.1-flash-free` | ✅ 200 | ✅ |
+| `fledge-alpha-free` | ✅ 200 | ❌ 403 地区封锁 |
+| `muse-spark-1.2/1.3-contributor-free` | ❌ 403 地区封锁 | ✅（1.3） |
+| `nemotron-3-ultra-free` | 401 `ModelError` | ✅ |
+| `ling-3.0-flash-fin-free` / `exo-free` | 400 / 503 `Endpoint is unavailable`（判为上游抖动，保留） | ❌ 400 同上 |
+| `mimo-v2.5-free` | 401 且已从 `/models` 消失 → 下线 | 不在本机目录里 |
+
+两条结论值得记住：
+
+1. **地区封锁与 401 都随出口和时间变化。** 同一个模型在两条通道上一条被封锁、一条正常。
+   所以任何"某模型永久不可用"的判断都必须由**当前出口**的探测得出，跨通道照抄结论
+   会误伤——这正是本项目把健康状态做成标注而非删除的直接原因。
+
+2. **`Endpoint is unavailable` 是上游抖动，不是模型拒绝输入。** 400 与 503 都出现过这条
+   文本，且过几分钟就恢复。它归到 `REQUEST_REJECTED`（❓）是状态码优先的产物，
+   保留在目录里是正确的处理。
+
+另有一条只对 `opencode2pi` 成立、**本项目不适用**的教训：它的 `UNAVAILABLE` 名单里
+`nemotron-3.ultra-free`（点）拼错，真实 id 是连字符，于是这条 denylist 静默空转。
+本项目的模型 id 全部来自本机 OpenCode 目录，没有任何手写 id，不存在这类拼写风险。
+
+## 14. 交互能力实测（omp 18.6.1）
+
+`ExtensionUIContext` 提供的交互原语，比"只有 notify"多得多：
+
+| API | 可用 | 说明 |
+| --- | --- | --- |
+| `ctx.ui.notify(message, type)` | ✅ | `info` → 状态行，`warning` / `error` 各自样式。**它不是 toast，是写进对话区的行**，所以逐条调用就是逐条输出 |
+| `ctx.ui.select(title, options)` | ✅ | 返回选中的 `label`（取消返回 `undefined`）。选项带 `description` |
+| `ctx.ui.confirm(title, message)` | ✅ | 布尔确认 |
+| `ctx.ui.input(title, placeholder)` | ✅ | 文本输入 |
+| `ctx.ui.setWorkingMessage(text)` | ✅ | 页脚一行进度；传 `undefined` 清除 |
+| `ctx.ui.setWidget(key, string[])` | ✅ | 编辑器上方的常驻面板，可反复重绘 |
+
+**唯一的边界是 `ctx.hasUI`**：打印模式（`-p`）下为 `false`，`select` / `confirm` 不可用，
+必须提前判断并直接返回，不要让无头运行挂在一个没人能看的对话框上。
+
+本项目据此做了两件事：`probe` 用 `notify` 逐条实时输出（而不是等全部结束），
+`filter` 用 `select` 询问是否隐藏模型。**过滤只能是用户的选择**——同一条通道上
+`fledge-alpha-free` 与 `muse-spark-1.3-contributor-free` 在两台机器上分别是
+"被封锁"和"正常"，自动规则有一半时间是错的。

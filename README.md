@@ -28,13 +28,13 @@ npm i -g opencode-ai
 然后装扩展：
 
 ```sh
-# 推荐：npm（pi 与 omp 都从这个源装；npm 还没上线时用下面的 git）
-omp install npm:opencode2pi-cli
-pi  install npm:opencode2pi-cli
-
-# 不走 npm：从 git 装。注意：omp/pi 不支持 .tgz，只能用 git URL
+# 当前可用：从 git 装。注意：omp/pi 不支持 .tgz，只能用 git URL
 omp install git:https://github.com/FanchangWang/opencode2pi-cli@stable
 pi  install git:https://github.com/FanchangWang/opencode2pi-cli@stable
+
+# npm 尚未上线（仓库没有 NPM_TOKEN，OIDC 首发也未配置），下面的命令暂时不可用：
+# omp install npm:opencode2pi-cli
+# pi  install npm:opencode2pi-cli
 
 # 追踪最新代码：装的是"此刻 main 指向的 commit"，含未发布的改动，之后不会自动更新
 omp install git:https://github.com/FanchangWang/opencode2pi-cli@main
@@ -123,8 +123,9 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | `/opencode2pi-cli doctor` | 逐项检查五个环节：CLI、`serve`、本地代理、模型目录、一次真实推理 |
 | `/opencode2pi-cli status` | 查看每个模型的健康标记（记录过期时自动重新探测） |
 | `/opencode2pi-cli probe` | 强制重新探测全部模型，并把「仅对话」结论写回模型列表 |
+| `/opencode2pi-cli filter` | 选择要在 `/model` 里隐藏哪些模型（默认一个都不隐藏） |
 
-不带参数执行会弹出三项菜单。
+不带参数执行会弹出四项菜单。
 
 ### 健康标记
 
@@ -136,8 +137,13 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | ❓ | 未探测，或上次结果已过期 |
 | ❌ | 确定不可用：连续两次确认下线，或上游按地区封锁（403 · not available in your country） |
 
-**模型永远只标注、不隐藏。** 免费池波动大，单次失败不足以判死刑——所以一次
+**默认只标注、不隐藏。** 免费池波动大，单次失败不足以判死刑——所以一次
 "模型消失"只标 ⚠️，连续两次才升级 ❌，任何一次成功都会清零。
+
+要不要从列表里隐藏，是你的决定：探测结束后（或随时 `/opencode2pi-cli filter`）
+会弹一个选项——全部保留 / 只隐藏地区封锁的 / 隐藏所有探测失败的。
+**配额耗尽和本地链路故障不会隐藏任何模型**：那是通道的状态，不是模型的。
+被隐藏的只是不进 `/model` 和 `--model`，`status` 里照样能看到全部。
 
 探测是真发请求（每个模型一次带工具的对话），整轮数分钟量级，结果落盘 6 小时。
 **探测只在交互式 TUI 下可用**：打印模式没有进度对话框，会直接提示而不挂起。
@@ -164,6 +170,11 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | 上游暂时不可用（5xx） | `UPSTREAM` | 稍后重试 |
 | 本地链路未就绪 | `RUNTIME_MISSING` | 跑 `doctor`，看是 CLI、serve 还是代理这一环 |
 | 本地代理令牌不匹配 | `UNKNOWN` | 内部错误，请提 issue |
+
+### 想让失败的模型不出现在 `/model` 里
+
+`/opencode2pi-cli filter`（或每次探测结束后自动询问）可以隐藏地区封锁的、以及所有探测失败的模型。
+这个选择会记在数据目录的 `filters.json` 里，重启后仍然有效；随时可以改回「全部保留」。
 
 ### 其它常见问题
 

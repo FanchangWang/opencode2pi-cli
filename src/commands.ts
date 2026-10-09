@@ -17,6 +17,7 @@ import type { ExtensionCommandContext } from '@oh-my-pi/pi-coding-agent'
 
 import type { CatalogModel } from './backend.ts'
 import { runDoctor } from './doctor.ts'
+import { saveFilters, type ProbeFilters } from './filters.ts'
 import {
   HEALTH_MARK,
   isStale,
@@ -28,7 +29,7 @@ import {
   type ModelHealth,
   type ProbeResult,
 } from './health.ts'
-import { apiKey, publishChatOnly, publishHealth, refreshProvider, state } from './runtime-host.ts'
+import { apiKey, publishChatOnly, publishFilters, publishHealth, refreshProvider, state } from './runtime-host.ts'
 
 /**
  * The slash command, named after the plugin rather than the provider.
@@ -40,7 +41,7 @@ import { apiKey, publishChatOnly, publishHealth, refreshProvider, state } from '
  */
 export const COMMAND = 'opencode2pi-cli';
 
-const USAGE = `用法：/${COMMAND} <doctor|status|probe>`;
+const USAGE = `用法：/${COMMAND} <doctor|status|probe|filter>`;
 
 const AGE = (record: HealthRecord): string => {
   const minutes = Math.round((Date.now() - record.checkedAt) / 60_000)
@@ -65,11 +66,11 @@ function rosterLine(model: CatalogModel, record: HealthRecord | undefined): stri
  * same model does with no tools at all. A model that is only slow with tools is
  * a very different problem from one that is slow either way.
  */
-function resultLine(result: ProbeResult): string {
+function resultLine(result: ProbeResult, done: number, total: number): string {
   const timing = result.textMs === undefined
     ? `${(result.toolsMs / 1000).toFixed(1)}s`
     : `工具 ${(result.toolsMs / 1000).toFixed(1)}s / 纯文本 ${(result.textMs / 1000).toFixed(1)}s`
-  return `${HEALTH_MARK[result.health]} ${result.modelId} — ${result.detail} · ${timing}`
+  return `[${done}/${total}] ${HEALTH_MARK[result.health]} ${result.modelId} — ${result.detail} · ${timing}`
 }
 
 /**
@@ -88,8 +89,8 @@ async function sweep(catalog: readonly CatalogModel[], ctx: ExtensionCommandCont
   const endpoint = state().endpoint
   if (!endpoint) throw new Error('本地代理未启动，无法探测')
   const results = await probeAll(catalog, { endpoint, key: apiKey() }, (done, total, result) => {
-    ctx.ui.setWorkingMessage(`正在探测 ${done}/${total}`)
-    ctx.ui.notify(resultLine(result))
+    ctx.ui.setWorkingMessage(`正在探测 ${done}/${total}：${result.modelId}`)
+    ctx.ui.notify(resultLine(result, done, total))
   })
   ctx.ui.setWorkingMessage()
   publishHealth(await saveHealth(results))
@@ -109,7 +110,7 @@ async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Prom
   const stale = roster.some(model => isStale(stored[model.id]))
 
   if (!runProbe && !stale) {
-    ctx.ui.notify(`${COMMAND} 模型状态：\n${roster.map(model => rosterLine(model, stored[model.id])).join('\n')}`)
+    ctx.ui.notify(`${COMMAND} 模型状态：\n${roster.map(model => rosterLine(model, stored[model.id])).join('\n')}${hiddenNote()}`)
     return
   }
 
@@ -120,14 +121,56 @@ async function showStatus(ctx: ExtensionCommandContext, runProbe: boolean): Prom
     return
   }
 
-  ctx.ui.notify(`正在探测 ${roster.length} 个模型（每个模型一条结果，陆续输出）…`)
+  ctx.ui.notify(`正在探测 ${roster.length} 个模型（每个模型一条结果，陆续输出；全部结束后给出汇总与完整列表）…`)
   const results = await sweep(roster, ctx)
-  const summary = summarizeHealth(roster, state().health)
+  const merged = state().health
+  const summary = summarizeHealth(roster, merged)
   const chatOnly = results.filter(result => result.chatOnly).map(result => result.modelId)
-  // The per-model lines are already on screen; the closing block only carries
-  // what a reader cannot reconstruct from them.
-  ctx.ui.notify(`探测完成：${summary}`
-    + (chatOnly.length ? `\n仅对话模型（已写回为不支持工具）：${chatOnly.join(', ')}` : ''))
+  // The per-model lines stream in completion order; this closing block is the
+  // canonical snapshot — every model, in catalog order, with its verdict.
+  ctx.ui.notify(`探测完成：${summary}\n${roster.map(model => rosterLine(model, merged[model.id])).join('\n')}`
+    + (chatOnly.length ? `\n仅对话模型（已写回为不支持工具）：${chatOnly.join(', ')}` : '')
+    + hiddenNote())
+  // The verdicts are only useful if they can change something, and whether to
+  // hide is the one decision we refuse to make on the user's behalf.
+  await chooseFilters(ctx)
+}
+
+/** A trailing line saying what the current filters remove, or that they do not. */
+function hiddenNote(): string {
+  const hidden = [...state().hidden];
+  return hidden.length ? `\n已从列表隐藏：${hidden.join(', ')}（用 /${COMMAND} filter 调整）` : '';
+}
+
+/**
+ * Ask what the roster should hide, and apply the answer.
+ *
+ * This is the user's call, not ours: the same model can answer ✅ on one lane
+ * and be region-blocked on another, so an automatic rule would be wrong half
+ * the time. Cancelling changes nothing — the default is to hide nothing.
+ */
+async function chooseFilters(ctx: ExtensionCommandContext): Promise<void> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify('过滤设置需要交互式 TUI（打印模式下不可用）。')
+    return
+  }
+  const choice = await ctx.ui.select(`${COMMAND} · 模型过滤`, [
+    { label: '全部保留（只标注，不隐藏）', description: '默认：任何模型都不从列表里移除' },
+    { label: '隐藏地区封锁的', description: '上游按当前出口拒绝的模型（403 · not available in your country）' },
+    { label: '隐藏所有探测失败的', description: '下线、地区封锁、请求被拒、上游故障；配额与本地链路问题不算' },
+  ])
+  const next = choice === '隐藏地区封锁的' ? { hideRegionBlocked: true, hideFailed: false }
+    : choice === '隐藏所有探测失败的' ? { hideRegionBlocked: true, hideFailed: true }
+      : choice === '全部保留（只标注，不隐藏）' ? { hideRegionBlocked: false, hideFailed: false }
+        : undefined
+  if (!next) return
+  await saveFilters(next)
+  const changed = publishFilters(next)
+  if (changed) refreshProvider()
+  const hidden = state().hidden
+  ctx.ui.notify(changed
+    ? `已更新过滤：当前隐藏 ${hidden.size} 个模型（/model 与 --model 里不再出现）`
+    : '过滤设置未变化。')
 }
 
 
@@ -158,6 +201,7 @@ export async function handleCommand(args: string, ctx: ExtensionCommandContext):
   if (sub === 'doctor') return runDoctorCommand(ctx)
   if (sub === 'status') return showStatus(ctx, false)
   if (sub === 'probe') return showStatus(ctx, true)
+  if (sub === 'filter') return chooseFilters(ctx)
   if (sub === '') return showMenu(ctx)
   ctx.ui.notify(USAGE, 'warning')
 }

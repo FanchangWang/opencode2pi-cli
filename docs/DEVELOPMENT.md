@@ -98,7 +98,17 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 - 探测结束若 `chatOnly` 变化，`runtime-host.publishChatOnly()` 返回 true，
   触发 `refreshProvider()` 重新注册 provider，把 `supportsTools: false` 写回注册表。
 
-## 7. 失败分类（`errors.ts`）
+## 7. 谁来决定隐藏（`filters.ts`）
+
+默认一个都不隐藏。探测结束后弹一次选择（`/opencode2pi-cli filter` 可随时改），存进
+`<dataDir>/filters.json`，`publishFilters` 重算隐藏集并触发一次 `registerProvider`。
+
+可隐藏的失败只有 `MODEL_GONE` / `REGION_BLOCKED` / `REQUEST_REJECTED` / `UPSTREAM`——
+这四类是模型自己的问题。**`RATE_LIMIT` 与 `RUNTIME_MISSING` 永不可隐藏**：
+实测同一分钟里一个模型 429、邻居全部 200；本地服务没起来时更没有任何模型该被隐藏。
+隐藏只影响注册表里的模型行，`status` 仍然列出全部。
+
+## 8. 失败分类（`errors.ts`）
 
 判定顺序 = 判错的代价顺序（地区封锁排在最前，它和本地代理的 403 撞状态码）：
 
@@ -110,7 +120,7 @@ REGION_BLOCKED → RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM �
 - 401/403 是**本地代理自己**的两种拒绝，不是上游对某个模型的判决。
 - 每条 summary 都写清"是什么 + 怎么办"，中文，一句话。
 
-## 8. 协议层为什么这么长
+## 9. 协议层为什么这么长
 
 `backend.ts` 约 950 行，其中大部分是 v1/v2 双分支和错误恢复。它们看起来啰嗦，但每条都
 对应一次真实故障——逐条清单见 [`FINDINGS.md`](FINDINGS.md) §8、§9。
@@ -118,7 +128,7 @@ REGION_BLOCKED → RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM �
 移植原则：**不要重写，只改编排**。协议层的行为差异要么是上游变了（那时应该改并测），
 要么就是 bug。
 
-## 9. 宿主契约的三处硬约束
+## 10. 宿主契约的三处硬约束
 
 1. 工厂必须 async（`registerProvider` 排队生效）。
 2. 同名重复注册 = 整体替换（这是写回机制，不是 bug）。
@@ -128,7 +138,7 @@ REGION_BLOCKED → RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM �
 `thinking.efforts` 的元素是 `const enum Effort`，字面量字符串赋值会被编译拒绝，
 唯一交汇点在 `EFFORT_ORDER`。
 
-## 10. 验证
+## 11. 验证
 
 ```sh
 npm run typecheck && bun test
@@ -149,7 +159,7 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free "用 bash 工具列出当前
 | `health` | 两次才判死、成功清零、TTL、剪枝、汇总顺序 |
 | `lifecycle` | 引用计数、失败不记忆、子代理不触发停机 |
 
-## 11. 发布
+## 12. 发布
 
 ```
 vX.Y.Z tag → release.yml
@@ -164,7 +174,26 @@ vX.Y.Z tag → release.yml
 - 新增 `src/*.ts` 后要同步 `release.yml` 里的 tarball 断言列表，否则拼错文件要到用户
   首次执行命令时才会暴露。
 
-## 12. 从 bridge 移植时改了什么
+### 现状：npm 尚未发布，`Publish to npm` 步骤注定失败
+
+v0.1.0 的 `Publish to npm` 挂在 `ENEEDAUTH`：仓库没有 `NPM_TOKEN` secret，而
+`opencode2pi-cli` 在 npmjs.com 上还不存在（`npm view opencode2pi-cli` → 404），
+没有包可以配置 Trusted Publisher。
+
+所以 **GitHub Release + `stable` ref 前移才是当前唯一有效的发版产物**，README 的安装
+命令只给 git URL。要真正上 npm，必须先补一次 token 首发：
+
+```sh
+gh secret set NPM_TOKEN   # npm automation token，需对本包有 publish 权限
+git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0   # 版本号不可重用
+git tag -a v0.1.1 -m "Release v0.1.1" && git push origin v0.1.1
+```
+
+此后 CI 才能走 OIDC。因为 workflow 里 publish 之后的步骤都带 `if: always()`，这个失败
+不会挡住 Release 和 `stable` —— 但也意味着**没人盯着就会一直失败而无人察觉**，
+排查发版问题时先看 `Publish to npm` 这一步的结论。
+
+## 13. 从 bridge 移植时改了什么
 
 | 位置 | 改动 |
 | --- | --- |
