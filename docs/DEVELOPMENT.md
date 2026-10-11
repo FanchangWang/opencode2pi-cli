@@ -207,19 +207,15 @@ npm run registry <cmd> # 其余命令：npm run registry login / publish / view 
 
 CI runner 默认就是 `registry.npmjs.org`，无需处理。
 
-### 首次发布：必须用 token 首发一次
+### 首次发布：只能用 token，且已走完（v0.3.0，2026-10-11）
 
 v0.1.0 / v0.2.0 / v0.2.1 三次发版的 `Publish to npm` 全部挂在 `ENEEDAUTH`：
 仓库没有 `NPM_TOKEN` secret，而 `opencode2pi-cli` 在 npmjs.com 上还不存在
 （`curl https://registry.npmjs.org/opencode2pi-cli` → 404），**没有包就没有
 Settings 页，配不了 Trusted Publisher**。这不是配置错误，是顺序问题。
 
-所以首发这一步只能靠 token（v0.3.0，2026-10-11）：
-
-```sh
-gh secret set NPM_TOKEN   # npm automation token，需对本包有 publish 权限
-git tag -a v0.3.0 -m "Release v0.3.0" && git push origin v0.3.0
-```
+所以首发这一步只能靠 token。v0.3.0 补上 secret 后一次跑通：workflow 12 步全绿，
+`opencode2pi-cli@0.3.0` 已上线，带 SLSA provenance，`stable` ref 同步前移。
 
 验证首发是否真的上去了（`npm view` 走缓存且 registry 有几十秒同步延迟，
 查证要直接读原始数据）：
