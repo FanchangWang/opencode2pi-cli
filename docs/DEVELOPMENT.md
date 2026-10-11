@@ -235,7 +235,8 @@ token 是**能用但要自己保管**的长期凭据：它躺在 GitHub secret �
 由 GitHub 的 OIDC token 换取，没有可泄露的长期密钥，还能自动生成 provenance。
 两者产出的包完全一样，差别只在认证方式。
 
-**前提：包已经存在**（所以 §12 的首发必须先成功）。
+**前提：包已经存在**（所以 §12 的首发必须先成功）。v0.3.1（2026-10-11）已按下面
+配好并验证通过，以下步骤留作下次换包或换仓库时复用。
 
 1. https://www.npmjs.com/package/opencode2pi-cli/settings/access 页面
 2. 找到 **Trusted Publisher**（部分账号在 **Settings → Trusted Publisher**）
@@ -252,10 +253,9 @@ token 是**能用但要自己保管**的长期凭据：它躺在 GitHub secret �
 gh secret delete NPM_TOKEN
 ```
 
-**验证切过去了**：再打一个新 tag 推上去，看 Actions 日志里 `Publish to npm`
-那一步打印的是 `No NPM_TOKEN; using OIDC trusted publishing.` 而不是
-`Authenticating with NPM_TOKEN.`。npmjs.com 包的 Versions 页面会显示
-provenance 徽章。
+**v0.3.1 已完成这一步**：Trusted Publisher 配好后删掉 secret，workflow 日志里
+`Publish to npm` 打印的是 `No NPM_TOKEN; using OIDC trusted publishing.`，
+provenance 由 npm 自动生成。**仓库现在不持有任何长期凭据。**
 
 **token 是要长期保管的资产，不要提交进仓库、不要贴进聊天工具。**
 

@@ -160,8 +160,8 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 （`if: always()`），因为两个宿主都能从 git ref 安装。
 
 **首发只能用 token**：包必须先存在，Trusted Publisher 的 Settings 页才有得配。
-v0.3.0（2026-10-11）已用 token 首发成功（`opencode2pi-cli@0.3.0`，带 SLSA provenance），
-往后走 OIDC。完整迁移步骤见 `docs/DEVELOPMENT.md` §12.1。
+v0.3.0（2026-10-11）用 token 首发成功，v0.3.1 起改走 OIDC Trusted Publishing，
+仓库不再持有长期凭据。完整迁移步骤见 `docs/DEVELOPMENT.md` §12.1。
 
 本机全局 registry 是 npmmirror，**不要改**。所有 npm 操作用脚本显式指定官方源：
 `npm run whoami` / `npm run dry-run` / `npm run release:check`，
