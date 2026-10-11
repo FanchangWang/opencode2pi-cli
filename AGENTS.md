@@ -125,7 +125,7 @@ test/
 
 ```sh
 npm run typecheck                     # tsc --noEmit
-bun test                              # 38 项
+bun test                              # 55 项
 omp -p --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
 
 # 工具调用链路（handoff + repair 全程）
@@ -152,12 +152,20 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 ## 发布
 
 打 `vX.Y.Z` tag，`.github/workflows/release.yml` 自动：校验 tag 与版本一致 →
-`npm ci` → typecheck → test → **校验 tarball 含全部 11 个入口模块** → `npm publish`
+`npm ci` → typecheck → test → **校验 tarball 含 `src/` 下全部 21 个模块** → `npm publish`
 → GitHub Release → 移动 `stable` ref。
 
 一次 publish 同时服务 pi 和 omp（两者都从 npm 解析）。认证二选一：配了
 `NPM_TOKEN` secret 走 token；没有则走 OIDC Trusted Publishing。release 始终产出
 （`if: always()`），因为两个宿主都能从 git ref 安装。
+
+**首发只能用 token**：包必须先存在，Trusted Publisher 的 Settings 页才有得配。
+v0.3.0（2026-10-11）已走完 token 首发，往后走 OIDC。完整迁移步骤见
+`docs/DEVELOPMENT.md` §12.1。
+
+本机全局 registry 是 npmmirror，**不要改**。所有 npm 操作用脚本显式指定官方源：
+`npm run whoami` / `npm run dry-run` / `npm run release:check`，
+其余命令走 `npm run registry <cmd>`。
 
 ---
 

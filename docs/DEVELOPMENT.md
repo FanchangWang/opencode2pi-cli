@@ -178,34 +178,109 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free "用 bash 工具列出当前
 ```
 vX.Y.Z tag → release.yml
   校验 tag/版本一致 → npm ci → typecheck → test
-  → 校验 tarball 含全部入口模块 → npm publish → GitHub Release → stable ref
+  → 校验 tarball 含全部 21 个入口模块 → npm publish → GitHub Release → stable ref
 ```
 
 - 无构建步骤：包只含 `src/` 的 TypeScript 源码，由宿主加载。
 - 双 manifest（`pi.extensions` + `omp.extensions`）指向同一个入口。
+- `actions/setup-node` 用 v7 且关掉 `package-manager-cache`：缓存步骤会往 `.npmrc`
+  里写内容，可能污染 OIDC 认证。首次发布走 token 时无害，切到 OIDC 后它是唯一的
+  认证路径，那时才是真风险。
 - 认证二选一：`NPM_TOKEN` 或 OIDC Trusted Publishing；release 用 `if: always()`
   保证即使 publish 失败也产出，因为两个宿主都能从 git ref 装。
 - 新增 `src/*.ts` 后要同步 `release.yml` 里的 tarball 断言列表，否则拼错文件要到用户
-  首次执行命令时才会暴露。
+  首次执行命令时才会暴露。该列表现在是 `src/` 下的**全部 21 个文件**——
+  `npm pack` 成功不代表打包内容正确，只有逐个断言才说明得了。
 
-### 现状：npm 尚未发布，`Publish to npm` 步骤注定失败
+### 本机 registry 固定用官方源，但不改全局配置
 
-v0.1.0 的 `Publish to npm` 挂在 `ENEEDAUTH`：仓库没有 `NPM_TOKEN` secret，而
-`opencode2pi-cli` 在 npmjs.com 上还不存在（`npm view opencode2pi-cli` → 404），
-没有包可以配置 Trusted Publisher。
+开发机全局 registry 是 `registry.npmmirror.com`（国内镜像），**刻意不改**：
+换掉会影响本机其它项目的依赖安装。本包所有 npm 操作一律用参数显式指定官方源，
+并固化成脚本，省得每次手打：
 
-所以 **GitHub Release + `stable` ref 前移才是当前唯一有效的发版产物**，README 的安装
-命令只给 git URL。要真正上 npm，必须先补一次 token 首发：
+```sh
+npm run whoami         # npm --registry=https://registry.npmjs.org/ whoami
+npm run dry-run        # 打包预演，发布前必看
+npm run release:check  # typecheck + test + dry-run 三合一
+npm run registry <cmd> # 其余命令：npm run registry login / publish / view …
+```
+
+CI runner 默认就是 `registry.npmjs.org`，无需处理。
+
+### 首次发布：必须用 token 首发一次
+
+v0.1.0 / v0.2.0 / v0.2.1 三次发版的 `Publish to npm` 全部挂在 `ENEEDAUTH`：
+仓库没有 `NPM_TOKEN` secret，而 `opencode2pi-cli` 在 npmjs.com 上还不存在
+（`curl https://registry.npmjs.org/opencode2pi-cli` → 404），**没有包就没有
+Settings 页，配不了 Trusted Publisher**。这不是配置错误，是顺序问题。
+
+所以首发这一步只能靠 token（v0.3.0，2026-10-11）：
 
 ```sh
 gh secret set NPM_TOKEN   # npm automation token，需对本包有 publish 权限
-git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0   # 版本号不可重用
-git tag -a v0.1.1 -m "Release v0.1.1" && git push origin v0.1.1
+git tag -a v0.3.0 -m "Release v0.3.0" && git push origin v0.3.0
 ```
 
-此后 CI 才能走 OIDC。因为 workflow 里 publish 之后的步骤都带 `if: always()`，这个失败
-不会挡住 Release 和 `stable` —— 但也意味着**没人盯着就会一直失败而无人察觉**，
-排查发版问题时先看 `Publish to npm` 这一步的结论。
+验证首发是否真的上去了（`npm view` 走缓存且 registry 有几十秒同步延迟，
+查证要直接读原始数据）：
+
+```sh
+curl -s https://registry.npmjs.org/opencode2pi-cli | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);console.log(Object.keys(j.versions),j['dist-tags'])})"
+```
+
+首发时 npm 会先建一个 `0.0.0-stage` 占位版本、真实版本稍后异步落地，
+期间 `latest` 指向占位符。这**不是** staged publishing 卡住，也不需要人工
+promote，等几十秒即可。
+
+### 12.1 从 token 迁到 Trusted Publishing（OIDC）
+
+token 是**能用但要自己保管**的长期凭据：它躺在 GitHub secret 里，泄露了要手工吊销，
+还要防 CI 日志意外打印。OIDC（Trusted Publishing）里 CI 用**一次性短期凭据**，
+由 GitHub 的 OIDC token 换取，没有可泄露的长期密钥，还能自动生成 provenance。
+两者产出的包完全一样，差别只在认证方式。
+
+**前提：包已经存在**（所以 §12 的首发必须先成功）。
+
+1. https://www.npmjs.com/package/opencode2pi-cli/settings/access 页面
+2. 找到 **Trusted Publisher**（部分账号在 **Settings → Trusted Publisher**）
+3. **Organization**：`FanchangWang`
+4. **Repository**：`FanchangWang/opencode2pi-cli`
+5. **Workflow filename**：`release.yml`
+   ⚠️ 填**文件名即可，不要填 `.github/workflows/release.yml`**。填错不会报错，
+   只在发布那一刻报权限错
+6. 勾选 **Allow npm publish**（**必须勾**）
+
+配好后删 secret，workflow 就会自动改走 OIDC，**workflow 文件不用改任何一行**：
+
+```sh
+gh secret delete NPM_TOKEN
+```
+
+**验证切过去了**：再打一个新 tag 推上去，看 Actions 日志里 `Publish to npm`
+那一步打印的是 `No NPM_TOKEN; using OIDC trusted publishing.` 而不是
+`Authenticating with NPM_TOKEN.`。npmjs.com 包的 Versions 页面会显示
+provenance 徽章。
+
+**token 是要长期保管的资产，不要提交进仓库、不要贴进聊天工具。**
+
+### OIDC 常见故障对照
+
+| 现象 | 原因 | 处置 |
+| --- | --- | --- |
+| `npm <11.5.1 cannot use OIDC` | runner 的 npm 太老 | workflow 已提前拦截并明确报错；升级 setup-node 的 node-version |
+| `E401/E403 Unauthorized` | Trusted Publisher 的 org / repo / workflow 名填错 | 回上一步逐字核对，**workflow 只填文件名** |
+| 明明配了却仍走 token | secret 还没删 | `gh secret delete NPM_TOKEN` 后重推 tag |
+| provenance 徽章没出现 | 走了 token 分支且未加 `--provenance` | 迁到 OIDC 后由 npm 自动生成，无需手工加 |
+| `npm view` 只看到 `0.0.0-stage` | 首发占位符，真实版本异步落地中 | 等几十秒；**不是** staged 卡住，不要去 promote |
+| npm 页面 README 还是旧的 | npm 只在 publish 时刷新 README | 再发一版；`npm view` 有缓存，直接读 registry 原始 JSON |
+
+### 其它
+
+- **npmjs.com 的 README 不会跟着 GitHub 自动更新**：npm 只读你 publish 的 tarball
+  里那份 README，所以改完仓库 README 也要**再发一版**才同步到 npm 页面。
+- 宿主**不支持**直接安装 `.tgz`（实测报 `package.json not found`）。支持的源是：
+  npm spec、git ref、`https://` 仓库地址、本地目录。所以 release 里的 tarball 附件
+  只作存档，不是安装路径。
 
 ## 13. 从 bridge 移植时改了什么
 

@@ -23,13 +23,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+          # setup-node v7 documents `package-manager-cache: false` as required
+          # in publishing workflows: the cache step writes into .npmrc, which
+          # can contaminate OIDC authentication. Once the Trusted Publisher is
+          # configured (the plan after the first publish), that is the only
+          # authentication path we have, so the risk stops being hypothetical.
+          # The cost is a cold `npm ci` per release, which is seconds for the
+          # four dev dependencies this package has.
+          package-manager-cache: false
 
       # `npm test` runs `bun test`; bun is not on stock runners.
       - uses: oven-sh/setup-bun@v2
@@ -53,7 +60,8 @@ jobs:
 
       # The extension is multi-module and loads itself from src/, so a tarball
       # missing any file fails only at the user's first command. Assert the whole
-      # payload here instead.
+      # payload here instead. This list is every file in src/ — keep the two in
+      # step; `npm pack` succeeding proves nothing about what went into it.
       - name: Verify the packed tarball
         run: |
           set -euo pipefail
@@ -63,18 +71,27 @@ jobs:
           contents="$(tar -tzf "$tarball" | tr -d '\r')"
           echo "$contents"
           for required in \
-            package/src/index.ts \
+            package/src/atomic.ts \
+            package/src/backend.ts \
             package/src/commands.ts \
             package/src/doctor.ts \
             package/src/errors.ts \
             package/src/filters.ts \
+            package/src/handoff.ts \
             package/src/health.ts \
+            package/src/index.ts \
+            package/src/json.ts \
+            package/src/model-status.ts \
             package/src/platform.ts \
             package/src/probe.ts \
+            package/src/protocol.ts \
             package/src/provider.ts \
+            package/src/reasoning.ts \
+            package/src/repair.ts \
             package/src/runtime-host.ts \
             package/src/runtime.ts \
-            package/src/server.ts; do
+            package/src/server.ts \
+            package/src/system-proxy.ts; do
             echo "$contents" | grep -qx "$required" || { echo "::error::$required missing from tarball"; exit 1; }
           done
           echo "TARBALL=$tarball" >> "$GITHUB_ENV"
