@@ -84,6 +84,11 @@ omp 进程
     （`HEALTH_TTL_MS`）只在行尾标 `（已过期）` 并提醒跑 `probe`——全量探测要几分钟真实
     推理，该由用户发起。`status` 与 `probe` 的差别只在事后动作：只有 `probe` 询问过滤。
 
+13. **上下文窗口的本地覆盖只写在 `src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`**（当前只有
+    `oc-mimo-v2.6-flash-free` → 1048576，理由与回退方法见 `docs/FINDINGS.md` §15）。注册表与
+    本地代理的 `/v1/models` 两处都必须经 `publishedContextWindow()` 取值，别在别处再写一遍；
+    每次生效写一条 note 并由 `applyProvider` 记进日志，不静默。
+
 ---
 
 ## 项目地图
@@ -125,7 +130,7 @@ test/
 
 ```sh
 npm run typecheck                     # tsc --noEmit
-bun test                              # 55 项
+bun test                              # 60 项
 omp -p --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
 
 # 工具调用链路（handoff + repair 全程）
@@ -178,10 +183,3 @@ v0.3.0（2026-10-11）用 token 首发成功，v0.3.1 起改走 OIDC Trusted Pub
 - ❌ 把 API key 落盘（它只在内存里，随进程消失）
 - ❌ 在 `session_shutdown` 里漏掉 `kind === 'main'` 过滤
 - ❌ 重写 `backend.ts` 的协议分支（先读 FINDINGS.md）
-
----
-
-## 当前状态
-
-v0.1.0，omp 18.6.1 + `@opencode/cli` v2.0.23 实测通过（2026-10-06）：
-单次推理、工具调用、doctor 五项、10 模型全量探测、进程零残留、`models.yml` 逐字节不变。

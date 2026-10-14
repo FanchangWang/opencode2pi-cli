@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 
 import type { CatalogModel, CompletionMeta, ProgressReport } from './backend.ts';
+import { publishedContextWindow } from './provider.ts';
 import { prepare, sendSSE, BridgeError, type ChatBody, type CompletionResult, type PreparedRequest } from './protocol.ts';
 
 function authorized(req: http.IncomingMessage, key: string): boolean {
@@ -28,14 +29,17 @@ function json(res: http.ServerResponse, status: number, data: unknown): void {
 
 // omp reads the context window from max_model_len > context_length > limits.sum, and the output
 // budget from limits.max_output_tokens; a key is only emitted when the catalog states it, so
-// omp keeps its own default instead of a fabricated limit.
+// omp keeps its own default instead of a fabricated limit. The one exception is a local
+// override (provider.ts): a window we have audited to be wrong is corrected here too, or the
+// listing would contradict the registry.
 function modelList(models: readonly CatalogModel[]): unknown {
   return { object: 'list', data: models.map(m => {
-    const context = m.input ?? m.context, limits: Record<string, number> = {};
+    const limits: Record<string, number> = {};
+    const { contextWindow: context } = publishedContextWindow(m);
     if (Number.isInteger(m.input) && (m.input ?? 0) > 0) limits.max_input_tokens = m.input!;
     if (Number.isInteger(m.output) && (m.output ?? 0) > 0) limits.max_output_tokens = m.output!;
     return { id: m.id, object: 'model', owned_by: 'opencode', name: m.name,
-      ...(Number.isInteger(context) && (context ?? 0) > 0 ? { context_length: context } : {}),
+      ...(context !== undefined ? { context_length: context } : {}),
       ...(Object.keys(limits).length ? { limits } : {}) };
   }) };
 }

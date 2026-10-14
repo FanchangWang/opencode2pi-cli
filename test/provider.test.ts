@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 
 import { freeModels, v2FreeModels, type CatalogModel } from '../src/backend.ts';
-import { toProviderModels } from '../src/provider.ts';
+import { publishedContextWindow, toProviderModels } from '../src/provider.ts';
 
 /** One free v1 model entry, overridable per field by the fixture under test. */
 function v1Model(overrides: Record<string, unknown> = {}) {
@@ -125,4 +125,47 @@ test('an unusable context or output limit falls back instead of publishing a zer
   expect(rows[1]).toMatchObject({ contextWindow: 128000, maxTokens: 8192 });
   // The input limit is the tighter of the two, so it wins over the context window.
   expect(rows[2]!.contextWindow).toBe(4096);
+});
+
+test('the mimo context override fires on the feed value, and never silently', () => {
+  // The local catalog (a models.dev mirror) publishes 200000 for
+  // oc-mimo-v2.6-flash-free; the MiMo model card and the official OpenCode CLI
+  // config both declare 1048576 (docs/FINDINGS.md §15, 2026-10-14 改判).
+  const notes: string[] = [];
+  const [row] = toProviderModels([{ id: 'oc-mimo-v2.6-flash-free', name: 'MiMo', context: 200_000 }], new Set(), new Set(), notes);
+  expect(row!.contextWindow).toBe(1_048_576);
+  expect(notes.join(' ')).toContain('200000 → 1048576');
+  expect(notes.join(' ')).toContain('local override');
+});
+
+test('the mimo override stops firing once the feed publishes the corrected value', () => {
+  // Values match → no note. The entry is not deleted; it stays as a regression
+  // guard should the feed drift back to 200000.
+  const notes: string[] = [];
+  const [row] = toProviderModels([{ id: 'oc-mimo-v2.6-flash-free', name: 'MiMo', context: 1_048_576 }], new Set(), new Set(), notes);
+  expect(row!.contextWindow).toBe(1_048_576);
+  expect(notes).toEqual([]);
+});
+
+test('the override fires even when the feed states nothing usable', () => {
+  // Silence is not better than a known-wrong number: the corrected window stands.
+  const notes: string[] = [];
+  const [row] = toProviderModels([{ id: 'oc-mimo-v2.6-flash-free', name: 'MiMo', context: 0 }], new Set(), new Set(), notes);
+  expect(row!.contextWindow).toBe(1_048_576);
+  expect(notes).toHaveLength(1);
+});
+
+test('no other model is overridden, and no note is written for them', () => {
+  const notes: string[] = [];
+  const [row] = toProviderModels([{ id: 'oc-other', name: 'Other', context: 200_000 }], new Set(), new Set(), notes);
+  expect(row!.contextWindow).toBe(200_000);
+  expect(notes).toEqual([]);
+});
+
+test('the proxy listing omits the context key unless the catalog states one or an override fires', () => {
+  // publishedContextWindow without a fallback keeps the listing's
+  // "omit, don't fabricate" rule (server.ts modelList).
+  expect(publishedContextWindow({ id: 'oc-a', name: 'A', context: 0 }).contextWindow).toBeUndefined();
+  expect(publishedContextWindow({ id: 'oc-a', name: 'A', context: 200_000 }).contextWindow).toBe(200_000);
+  expect(publishedContextWindow({ id: 'oc-mimo-v2.6-flash-free', name: 'MiMo', context: 200_000 }).contextWindow).toBe(1_048_576);
 });

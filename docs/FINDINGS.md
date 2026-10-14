@@ -192,3 +192,19 @@ Zen 直连有 `SHAPE_REJECTED` / `AUTH`（403/401 的几种来源），本机链
 `filter` 用 `select` 询问是否隐藏模型。**过滤只能是用户的选择**——同一条通道上
 `fledge-alpha-free` 与 `muse-spark-1.3-contributor-free` 在两台机器上分别是
 "被封锁"和"正常"，自动规则有一半时间是错的。
+
+## 15. mimo 的上下文窗口：feed 发布 200000，覆盖为 1048576（2026-10-14）
+
+本机目录缓存（`models-cache.json`，2026-10-11）里 `oc-mimo-v2.6-flash-free` 的
+`limit.context` 是 **200000**，且没有 `limit.input` 字段。但 MiMo 模型卡与官方 OpenCode
+CLI 配置都声明 **1048576**（opencode2dsh issue #17 报告过同一分歧；opencode2dsh 0.3.11
+与 opencode2pi 0.3.4 于 2026-10-14 做了同样的覆盖）。
+
+为什么不实测上限：两种错误代价不对等——声明偏小只会提前压缩上下文（可恢复），声明偏大会让
+请求真实溢出（不可恢复）。2026-10-11 因此保守取 200000；本次随上游改判为 1048576。
+
+覆盖只有一处：`src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`，经 `publishedContextWindow()`
+同时作用于注册表（`contextWindow`）与本地代理的 `/v1/models`（`context_length`）——omp 读
+窗口以列表为准（`server.ts` 注释），只改一处等于没改。每次生效写一条 note 由
+`applyProvider` 记进日志；feed 自己改为 1048576 后条目自动停火，留作回归护栏。若后续实测
+证明上限确实是 200000，删掉该条目即可回退。

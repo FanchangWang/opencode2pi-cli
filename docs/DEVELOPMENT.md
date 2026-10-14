@@ -76,8 +76,15 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 | `input` | `images === true ? ['text','image'] : ['text']` |
 | `supportsTools` | `toolcall === true && !chatOnly.has(id)` |
 | `cost` | 四项恒为 0（免费池） |
-| `contextWindow` | `m.input ?? m.context`，非正整数回落 `128000` |
+| `contextWindow` | `m.input ?? m.context`，非正整数回落 `128000`；`oc-mimo-v2.6-flash-free` 由本地覆盖改写为 `1048576`（见下） |
 | `maxTokens` | `m.output`，非正整数回落 `8192` |
+
+**本地覆盖（`LOCAL_MODEL_OVERRIDES`）**：feed 发布值与模型卡/官方配置冲突时以审计值为准，
+目前只有 `oc-mimo-v2.6-flash-free` 的上下文窗口（200000 → 1048576，理由与回退方法见
+[`FINDINGS.md`](FINDINGS.md) §15）。覆盖经 `publishedContextWindow()` 一个函数取值，注册表
+与 `/v1/models` 两处都用它——只改一处会让两个数字互相矛盾，而 omp 读窗口以列表为准。每次
+生效写一条 note，由 `applyProvider` 记进日志：看不见的覆盖等于无法回滚的覆盖。feed 自己
+改为 1048576 后条目自动停火，留作回归护栏。
 
 **故意不注册 `fetchDynamicModels`**：目录在启动时已从本地服务读到，宿主 24h 动态缓存
 只会让这份表变旧。
