@@ -138,6 +138,30 @@ test('the mimo context override fires on the feed value, and never silently', ()
   expect(notes.join(' ')).toContain('local override');
 });
 
+test('the deepseek-v4.1 override is per id, not per 200000 bucket', () => {
+  // opencode2pi 0.6.1 / opencode2dsh #81: the free id publishes 200000 while
+  // its paid twin declares 1000000, and a live needle probe recalled at
+  // 1,011,668 tokens. Only contextWindow changes; the output cap stays 32000.
+  const notes: string[] = [];
+  const [row] = toProviderModels(
+    [{ id: 'oc-deepseek-v4.1-flash-free', name: 'DeepSeek', context: 200_000, output: 32_000 }],
+    new Set(), new Set(), notes,
+  );
+  expect(row!.contextWindow).toBe(1_048_576);
+  expect(row!.maxTokens).toBe(32_000);
+  expect(notes.join(' ')).toContain('200000 → 1048576');
+
+  // Another model in the same 200000 bucket has no measurement of its own, so
+  // the feed still speaks unchanged.
+  const controlNotes: string[] = [];
+  const [control] = toProviderModels(
+    [{ id: 'oc-glm-5.3-flash-free', name: 'GLM', context: 200_000, output: 32_000 }],
+    new Set(), new Set(), controlNotes,
+  );
+  expect(control!.contextWindow).toBe(200_000);
+  expect(controlNotes).toEqual([]);
+});
+
 test('the mimo override stops firing once the feed publishes the corrected value', () => {
   // Values match → no note. The entry is not deleted; it stays as a regression
   // guard should the feed drift back to 200000.

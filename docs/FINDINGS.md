@@ -195,7 +195,9 @@ Zen 直连有 `SHAPE_REJECTED` / `AUTH`（403/401 的几种来源），本机链
 `fledge-alpha-free` 与 `muse-spark-1.3-contributor-free` 在两台机器上分别是
 "被封锁"和"正常"，自动规则有一半时间是错的。
 
-## 15. mimo 的上下文窗口：feed 发布 200000，覆盖为 1048576（2026-10-14）
+## 15. 上下文窗口覆盖：mimo 与 deepseek-v4.1（2026-10-14 / 2026-10-19）
+
+### mimo：feed 发布 200000，覆盖为 1048576（2026-10-14）
 
 本机目录缓存（`models-cache.json`，2026-10-11）里 `oc-mimo-v2.6-flash-free` 的
 `limit.context` 是 **200000**，且没有 `limit.input` 字段。但 MiMo 模型卡与官方 OpenCode
@@ -204,6 +206,21 @@ CLI 配置都声明 **1048576**（opencode2dsh issue #17 报告过同一分歧�
 
 为什么不实测上限：两种错误代价不对等——声明偏小只会提前压缩上下文（可恢复），声明偏大会让
 请求真实溢出（不可恢复）。2026-10-11 因此保守取 200000；本次随上游改判为 1048576。
+
+### deepseek-v4.1：同一 canonical 模型的免费/付费 id 窗口不同（2026-10-19 合并 opencode2pi 0.6.1）
+
+`models.dev` 给同一 canonical 模型的两个 id 写了不同窗口：免费
+`deepseek-v4.1-flash-free` 是 **200000**，付费 `deepseek-v4.1-flash` 是 **1000000**
+（2026-10-19 直接读 `https://models.dev/api.json` 核实；本机 OpenCode 目录里也有
+`opencode/deepseek-v4.1-flash-free`）。上游 opencode2dsh #81 在免费通道上用
+needle-in-a-haystack 实测到 **1,011,668 prompt tokens 仍能正确召回**，因此取 1048576，
+而不是照抄付费 id 的 1000000。
+
+只覆盖 `contextWindow`；`maxTokens` 保持 feed 的 **32000**（付费 id 的 384000 不适用）。
+覆盖按 id 生效：同桶的 `glm-5.3-flash-free` 发布值仍是 200000，测试同时钉住这两点，
+避免以后把覆盖写成「凡 200000 就放宽」。
+
+### 覆盖的实现与回退
 
 覆盖只有一处：`src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`，经 `publishedContextWindow()`
 同时作用于注册表（`contextWindow`）与本地代理的 `/v1/models`（`context_length`）——omp 读

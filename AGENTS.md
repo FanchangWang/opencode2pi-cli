@@ -91,10 +91,11 @@ omp / pi 进程
     （`HEALTH_TTL_MS`）只在行尾标 `（已过期）` 并提醒跑 `probe`——全量探测要几分钟真实
     推理，该由用户发起。`status` 与 `probe` 的差别只在事后动作：只有 `probe` 询问过滤。
 
-13. **上下文窗口的本地覆盖只写在 `src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`**（当前只有
-    `oc-mimo-v2.6-flash-free` → 1048576，理由与回退方法见 `docs/FINDINGS.md` §15）。注册表与
-    本地代理的 `/v1/models` 两处都必须经 `publishedContextWindow()` 取值，别在别处再写一遍；
-    每次生效写一条 note 并由 `applyProvider` 记进日志，不静默。
+13. **上下文窗口的本地覆盖只写在 `src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`**（当前有
+    `oc-mimo-v2.6-flash-free` 与 `oc-deepseek-v4.1-flash-free` → 均为 1048576，理由与回退方法见
+    `docs/FINDINGS.md` §15）。注册表与本地代理的 `/v1/models` 两处都必须经
+    `publishedContextWindow()` 取值，别在别处再写一遍；每次生效写一条 note 并由
+    `applyProvider` 记进日志，不静默。
 
 14. **两个宿主（omp / pi）的扩展 API 差异只写在 `src/host.ts`。** pi 1.3.0 没有 `logger`、
    上下文里没有 `agent`、`ui.select` 只收字符串、模型 thinking 从 `thinking` 换成
