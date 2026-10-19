@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ProviderModelConfig } from '@oh-my-pi/pi-coding-agent';
 
 import type { CatalogModel } from './backend.ts';
+import { host } from './host.ts';
 import { reasoningEfforts } from './reasoning.ts';
 
 export const PROVIDER = 'opencode-zen-cli';
@@ -97,9 +98,14 @@ export function publishedContextWindow(model: CatalogModel, fallback?: number): 
  * declaration but honored by the registry's custom-model builder, and it is the
  * only way to keep omp from dispatching tools to a chat-only model. Declaring it
  * here keeps that a checked property rather than an accidental extra key.
+ *
+ * `thinkingLevelMap` is the same situation for the other host, which takes a
+ * level-to-level map where omp takes a mode block. Only one host's key is ever
+ * present in a given row — `host().modelProjection` decides which.
  */
 export interface ProviderModelDefinition extends ProviderModelConfig {
   supportsTools?: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
 }
 
 export function toProviderModels(catalog: readonly CatalogModel[], chatOnly: ReadonlySet<string> = new Set(), hidden: ReadonlySet<string> = new Set(), notes?: string[]): ProviderModelDefinition[] {
@@ -111,9 +117,10 @@ export function toProviderModels(catalog: readonly CatalogModel[], chatOnly: Rea
       id: m.id,
       name: m.name,
       reasoning: m.reasoning === true,
-      ...(efforts.length ? { thinking: { mode: 'effort', efforts: [...efforts], defaultLevel: efforts[0]! } } : {}),
+      // The effort axis and the tool flag are the two keys whose shape and
+      // meaning differ per host; everything else below is common.
+      ...host().modelProjection(efforts, m.toolcall === true && !chatOnly.has(m.id)),
       input: m.images === true ? ['text', 'image'] : ['text'],
-      supportsTools: m.toolcall === true && !chatOnly.has(m.id),
       // The free pool is zero-priced by definition; a stale upstream cost must not reach omp.
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: published.contextWindow,
@@ -147,7 +154,13 @@ export function applyProvider(pi: ExtensionAPI, { endpoint, key, catalog, chatOn
   // once the feed publishes the corrected value on its own.
   const notes: string[] = [];
   const models = toProviderModels(catalog, chatOnly, hidden, notes);
-  if (notes.length > 0) pi.logger.info(`[${PROVIDER}] 模型目录本地覆盖：${notes.join('；')}`);
+  if (notes.length > 0) host().logger.info(`[${PROVIDER}] 模型目录本地覆盖：${notes.join('；')}`);
+  if (!host().honoursToolFlag && chatOnly.size > 0) {
+    // The verdict has nowhere to go on this host: its model config has no tool
+    // capability field, so a chat-only model keeps being offered tools. Say it
+    // once at registration rather than let the write-back look applied.
+    host().logger.warn(`[${PROVIDER}] 本宿主不识别 supportsTools，${chatOnly.size} 个仅对话模型无法写回：${[...chatOnly].join(', ')}`);
+  }
   pi.registerProvider(PROVIDER, {
     baseUrl: endpoint,
     api: API,

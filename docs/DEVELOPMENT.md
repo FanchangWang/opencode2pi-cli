@@ -31,10 +31,17 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
      └──> commands.ts ──> doctor.ts                                 │
                                         repair.ts <─────────────────┘
                                         handoff.ts
+
+host.ts <── index.ts / commands.ts / provider.ts   （两个宿主的差异全在这里）
 ```
 
 - **无环**：`runtime-host` 只 type-import `health`，`health` 不 import `runtime-host`
   （探测所需的 endpoint/key 由调用方作为参数传入）。
+- **宿主差异只有一个出口**：`host.ts` 是全项目唯一碰宿主专有 API 的地方——`logger`、
+  扩展名（`setLabel`）、主会话判定、菜单选项形状、模型 thinking 投影、
+  `supportsTools` 是否生效。它不 import 本项目任何模块，所以谁都能依赖它而不成环；
+  新增一处宿主差异时改这里，**不要**在调用方写 `if (是 pi)`（逐项对照见
+  [`FINDINGS.md`](FINDINGS.md) §16）。
 - **平台/协议/投影三层分离**：`platform` + `system-proxy` + `atomic` + `json` 是可独立
   测试的纯工具；`protocol`/`backend`/`handoff`/`repair` 是协议层，与 omp 无关；
   `provider` 是唯一的"把协议层翻译成宿主契约"的地方。
@@ -72,9 +79,9 @@ index.ts ──> runtime-host.ts ──> runtime.ts ──> backend.ts ──> p
 | --- | --- |
 | `id` / `name` | 原样（保留 `oc-` 前缀） |
 | `reasoning` | `m.reasoning === true` |
-| `thinking` | 仅当目录里存在 effort 档位时写；升序、**排除 `none`**、`defaultLevel` 取最弱档 |
+| `thinking` / `thinkingLevelMap` | 仅当目录里存在 effort 档位时写；升序、**排除 `none`**、`defaultLevel` 取最弱档。omp 落成 `thinking: {mode:'effort',…}`，pi 落成 `thinkingLevelMap`（档位名到档位名），由 `host.ts` 的 `modelProjection()` 分叉 |
 | `input` | `images === true ? ['text','image'] : ['text']` |
-| `supportsTools` | `toolcall === true && !chatOnly.has(id)` |
+| `supportsTools` | `toolcall === true && !chatOnly.has(id)`。**只有 omp 带这个键**：pi 的模型配置里没有工具能力字段，所以 pi 上"仅对话"结论写不回去，`applyProvider` 为此出一条 warn 而不是假装生效 |
 | `cost` | 四项恒为 0（免费池） |
 | `contextWindow` | `m.input ?? m.context`，非正整数回落 `128000`；`oc-mimo-v2.6-flash-free` 由本地覆盖改写为 `1048576`（见下） |
 | `maxTokens` | `m.output`，非正整数回落 `8192` |
@@ -149,15 +156,23 @@ REGION_BLOCKED → RATE_LIMIT → MODEL_GONE → REQUEST_REJECTED → UPSTREAM �
 移植原则：**不要重写，只改编排**。协议层的行为差异要么是上游变了（那时应该改并测），
 要么就是 bug。
 
-## 10. 宿主契约的三处硬约束
+## 10. 宿主契约：三处硬约束 + 两套 API
+
+omp 侧的三处硬约束：
 
 1. 工厂必须 async（`registerProvider` 排队生效）。
 2. 同名重复注册 = 整体替换（这是写回机制，不是 bug）。
-3. `ProviderModelConfig` 没有 `supportsTools`，但注册表会读 —— 自己在
-   `provider.ts` 补声明。
+3. `ProviderModelConfig` 没有 `supportsTools`，但注册表会读 —— 在 `provider.ts` 的
+   `ProviderModelDefinition` 里补声明。
 
 `thinking.efforts` 的元素是 `const enum Effort`，字面量字符串赋值会被编译拒绝，
-唯一交汇点在 `EFFORT_ORDER`。
+`provider.ts` 的 `EFFORT_ORDER` 是 omp 这一侧的唯一起点（pi 那一侧对应
+`host.ts` 的 `modelProjection`）。
+
+**但 pi 不是同一套 API**：它没有 `logger`、上下文里没有 `agent`、`ui.select` 只收字符串、
+模型 thinking 叫 `thinkingLevelMap`、也没有 `supportsTools`。这些差异全部由 `host.ts`
+吸收，调用方一律走 `host()`；判别器只有一条——**API 对象上有没有 `logger`**。
+逐项对照与出处见 [`FINDINGS.md`](FINDINGS.md) §16。
 
 ## 11. 验证
 
@@ -166,6 +181,17 @@ npm run typecheck && bun test
 omp -p --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
 omp -p --model opencode-zen-cli/oc-space-bunny-free "用 bash 工具列出当前目录的文件，只回显命令输出"
 ```
+
+改的是工作区、还没装进宿主时用 `-e` 直接加载（两个宿主都支持），pi 侧改完必须这样跑一遍——
+它的模型投影键和 omp 不同，只有真跑才说明注册没被 schema 拒：
+
+```sh
+omp -p --no-session --no-extensions -e ./src/index.ts --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
+pi  -p --no-session -ne            -e ./src/index.ts --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
+```
+
+冒烟带上 `OPENCODE_ZEN_CLI_PROXY=0`：本机系统代理的出口目前被 Zen 拒，
+免费池会整片回"abusive traffic from this IP"，那是出口的属性（`FINDINGS.md` §17）。
 
 改了启停路径还要确认没有残留 `opencode.exe`（见 [`FINDINGS.md`](FINDINGS.md) §4）。
 
@@ -179,13 +205,14 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free "用 bash 工具列出当前
 | `errors` | 表驱动分类，含 401/403 的本地语义 |
 | `health` | 两次才判死、成功清零、剪枝、汇总顺序 |
 | `lifecycle` | 引用计数、失败不记忆、子代理不触发停机 |
+| `host` | omp/pi 判别、菜单 description 的折叠与还原、无 logger 宿主的日志缓冲与回放 |
 
 ## 12. 发布
 
 ```
 vX.Y.Z tag → release.yml
   校验 tag/版本一致 → npm ci → typecheck → test
-  → 校验 tarball 含全部 21 个入口模块 → npm publish → GitHub Release → stable ref
+  → 校验 tarball 的 src/ 清单与仓库双向一致 → npm publish → GitHub Release → stable ref
 ```
 
 - 无构建步骤：包只含 `src/` 的 TypeScript 源码，由宿主加载。
@@ -195,9 +222,10 @@ vX.Y.Z tag → release.yml
   认证路径，那时才是真风险。
 - 认证二选一：`NPM_TOKEN` 或 OIDC Trusted Publishing；release 用 `if: always()`
   保证即使 publish 失败也产出，因为两个宿主都能从 git ref 装。
-- 新增 `src/*.ts` 后要同步 `release.yml` 里的 tarball 断言列表，否则拼错文件要到用户
-  首次执行命令时才会暴露。该列表现在是 `src/` 下的**全部 21 个文件**——
-  `npm pack` 成功不代表打包内容正确，只有逐个断言才说明得了。
+- 新增 `src/*.ts` 后**不必**再改 `release.yml`：tarball 断言已改为从 `src/` 派生
+  （`find src -name '*.ts'`）再与 `npm pack` 的清单双向比对——少一个文件与多一个文件
+  都算失败，空清单另有非空护栏。`npm pack` 成功不代表打包内容正确，只有比对才说明得了；
+  而手写清单在新增模块的当天就会过期。
 
 ### 本机 registry 固定用官方源，但不改全局配置
 

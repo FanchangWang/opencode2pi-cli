@@ -29,6 +29,7 @@ import {
   type HealthRecord,
   type ProbeResult,
 } from './health.ts'
+import { host } from './host.ts'
 import { apiKey, publishChatOnly, publishFilters, publishHealth, refreshProvider, state } from './runtime-host.ts'
 
 /**
@@ -209,7 +210,7 @@ async function chooseFilters(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify('过滤设置需要交互式 TUI（打印模式下不可用）。')
     return
   }
-  const choice = await ctx.ui.select(`${COMMAND} · 模型过滤`, [
+  const choice = await host().select(ctx, `${COMMAND} · 模型过滤`, [
     { label: '全部保留（只标注，不隐藏）', description: '默认：任何模型都不从列表里移除' },
     { label: '隐藏地区封锁的', description: '上游按当前出口拒绝的模型（403 · not available in your country）' },
     { label: '隐藏所有探测失败的', description: '下线、地区封锁、请求被拒、上游故障；配额与本地链路问题不算' },
@@ -238,7 +239,7 @@ async function showMenu(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify(USAGE)
     return
   }
-  const choice = await ctx.ui.select(COMMAND, [
+  const choice = await host().select(ctx, COMMAND, [
     { label: 'doctor', description: '逐项检查 CLI、serve、本地代理、模型目录与一次真实推理' },
     { label: 'status', description: '显示上次探测的结果；从未探测过的模型会自动补测' },
     { label: 'probe', description: '重新探测全部模型，并把仅对话结论写回模型列表' },
@@ -258,6 +259,9 @@ async function runDoctorCommand(ctx: ExtensionCommandContext): Promise<void> {
 }
 
 export async function handleCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  // A host without a logger buffers its startup notes; the first command is the
+  // only surface it offers for them, so they are replayed before anything else.
+  host().flushNotes(ctx)
   const sub = args.trim().split(/\s+/)[0]?.toLowerCase() ?? ''
   if (sub === 'doctor') return runDoctorCommand(ctx)
   if (sub === 'status') return showStatus(ctx)

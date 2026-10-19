@@ -17,6 +17,7 @@
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent'
 
 import { COMMAND, handleCommand } from './commands.ts'
+import { host, installHost } from './host.ts'
 import { applyProvider, PROVIDER } from './provider.ts'
 import { acquire, apiKey, killOnExit, onProviderRefresh, release, state, type RuntimeState } from './runtime-host.ts'
 
@@ -35,14 +36,17 @@ function publishRoster(pi: ExtensionAPI, current: Readonly<RuntimeState>): void 
     // Everything is hidden. `registerProvider` ignores an empty model list and
     // the host keeps the one it already has, so this would silently do nothing.
     // Say so rather than let it look applied.
-    pi.logger.warn(`[${PROVIDER}] 过滤规则隐藏了全部模型，/model 里的列表不会变小；用 /${COMMAND} filter 放宽`)
+    host().logger.warn(`[${PROVIDER}] 过滤规则隐藏了全部模型，/model 里的列表不会变小；用 /${COMMAND} filter 放宽`)
     return
   }
   applyProvider(pi, { endpoint: current.endpoint, key: apiKey(), catalog: current.catalog, chatOnly: current.chatOnly, hidden: current.hidden })
 }
 
 export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
-  pi.setLabel('OpenCode Zen CLI')
+  // The host is adopted before anything else: every host-specific call below
+  // goes through it, and the two hosts do not offer the same API.
+  installHost(pi)
+  host().labelExtension('OpenCode Zen CLI')
 
   // The provider is re-registered whenever a probe changes a model's tool
   // support or the user changes what to hide, so this callback is the single
@@ -59,7 +63,7 @@ export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
   } catch (error) {
     // A broken chain must not take omp down with it: omp starts normally, just
     // without this provider, and the user is pointed at the diagnostic command.
-    pi.logger.warn(`[${PROVIDER}] 启动失败：${(error as Error).message}`)
+    host().logger.warn(`[${PROVIDER}] 启动失败：${(error as Error).message}`)
   }
 
   pi.registerCommand(COMMAND, {
@@ -79,7 +83,8 @@ export default async function opencodeZenCli(pi: ExtensionAPI): Promise<void> {
   pi.on('session_shutdown', async (_event, ctx) => {
     // Task/eval/advisor subagents each emit `session_shutdown` too. Without this
     // filter the first subagent to exit would tear down the parent's server.
-    if (ctx.agent.kind === 'main') await release()
+    // Which contexts count as the top-level session is the host's call to make.
+    if (host().isMainSession(ctx)) await release()
   })
 
   killOnExit()

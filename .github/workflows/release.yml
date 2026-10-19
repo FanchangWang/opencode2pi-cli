@@ -7,8 +7,13 @@ name: Release
 # The package ships TypeScript sources and zero runtime dependencies, so there is
 # no build step: `files: ["src/"]` is the entire payload.
 #
-# Required repository secret: NPM_TOKEN (an npm automation token with publish
-# access to this package).
+# Authentication, in npm's own order of preference (see DEVELOPMENT.md §12.1):
+#   NPM_TOKEN secret present → token auth with --provenance. Kept as an escape
+#     hatch for forks; this repository no longer sets the secret.
+#   otherwise               → OIDC trusted publishing, configured on npmjs.com
+#     for this package. This is the live path (proven by the v0.3.1 and v0.3.2
+#     releases, whose publish steps logged "No NPM_TOKEN; using OIDC trusted
+#     publishing.").
 
 on:
   push:
@@ -59,9 +64,11 @@ jobs:
       - run: npm test
 
       # The extension is multi-module and loads itself from src/, so a tarball
-      # missing any file fails only at the user's first command. Assert the whole
-      # payload here instead. This list is every file in src/ — keep the two in
-      # step; `npm pack` succeeding proves nothing about what went into it.
+      # missing any file fails only at the user's first command. Derive the
+      # payload from src/ itself and compare it with what was packed: a list
+      # maintained by hand goes stale the moment a module is added, and the two
+      # directions catch different accidents — a module left out of the tarball,
+      # and a file the `files` field swept in.
       - name: Verify the packed tarball
         run: |
           set -euo pipefail
@@ -70,30 +77,22 @@ jobs:
           # exact-match assertions below hold on every runner.
           contents="$(tar -tzf "$tarball" | tr -d '\r')"
           echo "$contents"
-          for required in \
-            package/src/atomic.ts \
-            package/src/backend.ts \
-            package/src/commands.ts \
-            package/src/doctor.ts \
-            package/src/errors.ts \
-            package/src/filters.ts \
-            package/src/handoff.ts \
-            package/src/health.ts \
-            package/src/index.ts \
-            package/src/json.ts \
-            package/src/model-status.ts \
-            package/src/platform.ts \
-            package/src/probe.ts \
-            package/src/protocol.ts \
-            package/src/provider.ts \
-            package/src/reasoning.ts \
-            package/src/repair.ts \
-            package/src/runtime-host.ts \
-            package/src/runtime.ts \
-            package/src/server.ts \
-            package/src/system-proxy.ts; do
-            echo "$contents" | grep -qx "$required" || { echo "::error::$required missing from tarball"; exit 1; }
-          done
+
+          expected_file="$(mktemp)"
+          actual_file="$(mktemp)"
+          (cd src && find . -name '*.ts' -printf 'package/src/%P\n' | sort) > "$expected_file"
+          printf '%s\n' "$contents" | sed -n 's|^\(package/src/[^/]*\.ts\)$|\1|p' | sort > "$actual_file"
+
+          # An empty expectation would make the comparison below pass while
+          # asserting nothing at all.
+          if [ ! -s "$expected_file" ]; then
+            echo "::error::src/ contains no TypeScript modules; refusing to pass vacuously"
+            exit 1
+          fi
+          if ! diff -u "$expected_file" "$actual_file"; then
+            echo "::error::the packaged src/ set does not match the repository's (missing = -, unexpected = +)"
+            exit 1
+          fi
           echo "TARBALL=$tarball" >> "$GITHUB_ENV"
 
       # Secrets are not directly readable in an `if:` expression, so the

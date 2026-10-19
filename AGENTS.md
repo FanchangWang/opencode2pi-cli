@@ -10,11 +10,14 @@
 数据通路是
 
 ```
-omp 进程
+omp / pi 进程
   └─ 本扩展
-       ├─ spawn 隔离的 `opencode serve`（本机 CLI，随 omp 生命周期起停）
+       ├─ spawn 隔离的 `opencode serve`（本机 CLI，随宿主生命周期起停）
        └─ 起一个 127.0.0.1 的 OpenAI 兼容服务 → registerProvider('opencode-zen-cli')
 ```
+
+两个宿主共用这条通路，差异只在 `src/host.ts` 一处（对照表见
+[`docs/FINDINGS.md`](docs/FINDINGS.md) §16）。
 
 用户不需要 API key、不需要另开终端、不需要改任何配置文件。**不写 `models.yml`**。
 
@@ -52,8 +55,8 @@ omp 进程
 
 4. **`supportsTools` 不在扩展侧 `ProviderModelConfig` 的类型声明里**，但注册表的
    自定义模型构造器确实会读它。`src/provider.ts` 里显式声明了
-   `ProviderModelDefinition extends ProviderModelConfig` 来补这个字段——
-   别删，也别改成 `any`。
+   `ProviderModelDefinition extends ProviderModelConfig` 来补这个字段（pi 侧的
+   `thinkingLevelMap` 同理补在这里）——别删，也别改成 `any`。
 
 5. **`Effort` 是 `@oh-my-pi/pi-catalog` 的 `const enum`**，普通字符串赋不过去。
    `provider.ts` 里那一处 `as unknown as readonly EffortLevel[]` 是有意的。
@@ -64,14 +67,18 @@ omp 进程
    都不会触发。`runtime.ts` 的 `stop()` 与 `killTree()` 就是为此存在，别改回信号。
 
 7. **`session_shutdown` 每个会话都会触发**，包括 task/eval/advisor 子会话。
-   必须过滤 `ctx.agent.kind === 'main'`，否则第一个退出的子代理就会拆掉父会话的服务。
+   omp 侧必须先过滤 `agent.kind === 'main'`，否则第一个退出的子代理就会拆掉父会话的服务；
+   这条判定在 `src/host.ts` 的 `isMainSession()` 里，别在 `index.ts` 里再写一遍。
+   （pi 侧没有 `agent`，但它的 shutdown 每次都伴随会话替换 = 工厂重跑，见 FINDINGS §16。）
 
 8. **探测可能长达数分钟，绝不能放在启动路径上。** 启动只做：定位 → 拉起 → 就绪 →
    读目录 → listen → 注册。探测由斜杠命令驱动。
 
 9. **一次失败不能判死模型。** 连续两次 `MODEL_GONE` 才升级 ❌，任何一次成功清零。
    同理，`RATE_LIMIT` 不是对模型的判决（上游按模型计费），单列 🚧。唯一的例外是
-   `REGION_BLOCKED`：同一出口下地区封锁是确定性的，一次即判死。
+   `REGION_BLOCKED`：同一出口下（地区封锁，或上游拒绝该出口 IP 的
+   `abusive traffic`）封锁是确定性的，一次即判死——它判的是**出口**，换出口必须重测
+   （见 FINDINGS §17）。
 
 10. **隐藏模型必须由用户选择。** `filters.json` 里只有两个开关，都默认为关；
     配额耗尽（`RATE_LIMIT`）与本地链路故障（`RUNTIME_MISSING`）**永远不隐藏任何模型**——
@@ -89,6 +96,13 @@ omp 进程
     本地代理的 `/v1/models` 两处都必须经 `publishedContextWindow()` 取值，别在别处再写一遍；
     每次生效写一条 note 并由 `applyProvider` 记进日志，不静默。
 
+14. **两个宿主（omp / pi）的扩展 API 差异只写在 `src/host.ts`。** pi 1.3.0 没有 `logger`、
+   上下文里没有 `agent`、`ui.select` 只收字符串、模型 thinking 从 `thinking` 换成
+   `thinkingLevelMap`，也没有 `supportsTools` 字段（逐项对照与出处见
+   `docs/FINDINGS.md` §16）。判别器只有一条：**API 对象上有没有 `logger`**——
+   别去嗅探版本号，也别在调用方写 `if (是 pi)`；一律走 `host()`。
+   代价要说清：pi 上"仅对话"结论写不回模型表，`applyProvider` 会 warn 而不是假装生效。
+
 ---
 
 ## 项目地图
@@ -96,6 +110,8 @@ omp 进程
 ```
 src/
   index.ts         扩展入口：注册 provider / 命令 / session_start / session_shutdown
+  host.ts          宿主适配层：omp 与 pi 的扩展 API 差异（logger / 扩展名 / 主会话判定 /
+                   菜单选项形状 / 模型 thinking 投影 / supportsTools 是否生效）
   runtime-host.ts  进程内生命周期：引用计数、状态广播、就绪编排
   runtime.ts       定位 CLI、隔离 env、拉起 serve、就绪轮询、停机
   server.ts        本地 OpenAI 兼容服务（/v1/models、/v1/chat/completions）
@@ -106,6 +122,7 @@ src/
   provider.ts      目录 → omp 模型表的逐字段投影
   health.ts        逐模型探测、判定规则、落盘
   errors.ts        失败分类（本机链路语义，与 Zen 直连不同）
+  filters.ts       隐藏开关的读写（filters.json，两个开关默认全关）
   doctor.ts        五项体检
   commands.ts      /opencode2pi-cli 三条命令与 TUI
   probe.ts         探测原语（工具调用探测体）
@@ -118,6 +135,7 @@ src/
 test/
   atomic / platform / system-proxy / repair   移植自 bridge
   provider / errors / health / lifecycle       本项目新增
+  host                                         omp/pi 判别、菜单折叠、日志缓冲
 ```
 
 `backend.ts`（~950 行）是移植量最大的一块，**逐段对应 bridge 的同名文件**。
@@ -130,13 +148,27 @@ test/
 
 ```sh
 npm run typecheck                     # tsc --noEmit
-bun test                              # 60 项
+bun test                              # 70 项
 omp -p --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
 
 # 工具调用链路（handoff + repair 全程）
 omp -p --model opencode-zen-cli/oc-space-bunny-free \
   "用 bash 工具列出当前目录的文件，只回显命令输出"
 ```
+
+**冒烟一律带 `OPENCODE_ZEN_CLI_PROXY=0`**（或先确认当前出口没被 Zen 拒）：本机系统代理
+`192.168.31.50:7890` 的出口会让免费池全部回"abusive traffic from this IP"，
+那是**出口**的属性，不是项目故障（FINDINGS §17）。
+
+改的是本地源码、还没装进宿主时，用 `-e` 直接加载当前工作区，两个宿主都支持：
+
+```sh
+omp -p --no-session --no-extensions -e ./src/index.ts --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
+pi  -p --no-session -ne            -e ./src/index.ts --model opencode-zen-cli/oc-space-bunny-free "Reply with exactly OK"
+```
+
+pi 侧改了什么（`host.ts`）就必须这样跑一遍：它的模型投影和 omp 不是同一个键
+（FINDINGS §16），只有真跑才说明注册没被 schema 拒。
 
 期望：类型检查干净、单测全过、第一条输出恰好 `OK`、第二条列出真实文件。
 
@@ -157,8 +189,8 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 ## 发布
 
 打 `vX.Y.Z` tag，`.github/workflows/release.yml` 自动：校验 tag 与版本一致 →
-`npm ci` → typecheck → test → **校验 tarball 含 `src/` 下全部 21 个模块** → `npm publish`
-→ GitHub Release → 移动 `stable` ref。
+`npm ci` → typecheck → test → **校验 tarball 的 `src/` 与仓库一致（双向比对，从 `src/` 派生，
+不再手写清单）** → `npm publish` → GitHub Release → 移动 `stable` ref。
 
 一次 publish 同时服务 pi 和 omp（两者都从 npm 解析）。认证二选一：配了
 `NPM_TOKEN` secret 走 token；没有则走 OIDC Trusted Publishing。release 始终产出
@@ -166,7 +198,9 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='op
 
 **首发只能用 token**：包必须先存在，Trusted Publisher 的 Settings 页才有得配。
 v0.3.0（2026-10-11）用 token 首发成功，v0.3.1 起改走 OIDC Trusted Publishing，
-仓库不再持有长期凭据。完整迁移步骤见 `docs/DEVELOPMENT.md` §12.1。
+仓库不再持有长期凭据（`gh secret list` 为空；v0.3.1 与 v0.3.2 的 `Publish to npm`
+步骤都打印 `No NPM_TOKEN; using OIDC trusted publishing.`，可回查运行日志核实）。
+完整迁移步骤见 `docs/DEVELOPMENT.md` §12.1。
 
 本机全局 registry 是 npmmirror，**不要改**。所有 npm 操作用脚本显式指定官方源：
 `npm run whoami` / `npm run dry-run` / `npm run release:check`，

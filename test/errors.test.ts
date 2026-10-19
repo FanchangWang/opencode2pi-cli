@@ -9,6 +9,8 @@ const CASES: { name: string; status: number | undefined; message: string; kind: 
   { name: 'a 404 is a retired model', status: 404, message: 'HTTP 404', kind: 'MODEL_GONE' },
   { name: 'a ModelError without a status is a retired model', status: undefined, message: 'ModelError: provider has no such model', kind: 'MODEL_GONE' },
   { name: 'a country block is a region verdict, not a proxy refusal', status: 403, message: 'HTTP 403 · Error from provider (Console): This model is not available in your country', kind: 'REGION_BLOCKED' },
+  { name: "Zen's IP-reputation refusal is an egress verdict, not an internal error", status: 403, message: "OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address. Otherwise, subscribe to OpenCode Go", kind: 'REGION_BLOCKED' },
+  { name: 'the same refusal without a status is still an egress verdict', status: undefined, message: "we've detected abusive traffic from this IP address", kind: 'REGION_BLOCKED' },
   { name: 'a 400 is a rejected request', status: 400, message: 'HTTP 400 unsupported content', kind: 'REQUEST_REJECTED' },
   { name: 'a 500 is an upstream outage', status: 500, message: 'HTTP 500', kind: 'UPSTREAM' },
   { name: 'a fetch transport failure is a missing runtime', status: undefined, message: 'TypeError: fetch failed', kind: 'RUNTIME_MISSING' },
@@ -43,4 +45,15 @@ test('a country block beats the 403 proxy-refusal branch', () => {
   // wrong machine, which is the failure this ordering exists to prevent.
   expect(classifyFailure(403, 'This model is not available in your country').kind).toBe('REGION_BLOCKED');
   expect(classifyFailure(403, 'Browser-origin requests are disabled').kind).toBe('UNKNOWN');
+});
+
+test('an egress refusal beats the 400 and 403 branches alike', () => {
+  // Measured 2026-10-19: the same wording arrives from every free model behind a
+  // refused exit, and the status it carries is not the deciding fact. Reading it
+  // as REQUEST_REJECTED would blame the model's tool support; reading it as the
+  // 403 branch would call the extension broken. Both send the user the wrong way.
+  const refusal = "OpenCode's free models aren't available from your current network because we've detected abusive traffic from this IP address";
+  expect(classifyFailure(400, refusal).kind).toBe('REGION_BLOCKED');
+  expect(classifyFailure(403, refusal).kind).toBe('REGION_BLOCKED');
+  expect(classifyFailure(undefined, refusal).kind).toBe('REGION_BLOCKED');
 });

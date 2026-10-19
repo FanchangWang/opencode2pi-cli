@@ -3,6 +3,8 @@
 > 这些结论都是抓包级或跑出来的，重验成本很高。**改动相关代码前先读对应条目。**
 > 环境：omp 18.6.1（bun 1.4.2 单文件可执行）、`@opencode/cli` v2.0.23、win32 x64。
 > 记录时间：2026-10-06。
+> 2026-10-19 复核：本机为 omp 18.12.2、`@opencode/cli` v2.0.32、pi 1.3.0。
+> **§1–§14 是 v2.0.23 下测的**，§16 起按当次环境另记——换版本前先确认条目属于哪一批。
 
 ---
 
@@ -208,3 +210,76 @@ CLI 配置都声明 **1048576**（opencode2dsh issue #17 报告过同一分歧�
 窗口以列表为准（`server.ts` 注释），只改一处等于没改。每次生效写一条 note 由
 `applyProvider` 记进日志；feed 自己改为 1048576 后条目自动停火，留作回归护栏。若后续实测
 证明上限确实是 200000，删掉该条目即可回退。
+
+## 16. 双宿主：pi 1.3.0 与 omp 的扩展 API 差异（2026-10-19）
+
+本项目同时被 omp 与 pi 加载，两侧的扩展 API **不是同一个对象**。pi 侧证据取自
+`code-ref/pi-1.3.0`，行号对应 `packages/coding-agent/src/core/extensions/types.ts`
+（模型模式例外，另注）。
+
+| 能力 | omp | pi 1.3.0 | 后果 |
+| --- | --- | --- | --- |
+| 扩展 API 上的 `logger` | ✅ | ❌ 该文件全文无 `logger` | pi 侧启动日志无处可去，只能自己缓冲再找机会回放 |
+| `setLabel` | `setLabel(label)`：命名扩展本身 | 只有 `setLabel(entryId, label)`（:1760）：**会话条目**的标签 | pi 侧不设扩展名，语义不同的东西不能硬套 |
+| 上下文的 `agent` | ✅ `ctx.agent.kind` | ❌ 上下文里没有 `agent` | pi 无法按 agent 区分主/子会话 |
+| `ui.select` 的选项 | `{label, description}[]` | `string[]` | pi 侧得把 description 折进 label，返回后再折回来 |
+| 模型 thinking 轴 | `thinking: {mode:'effort', efforts, defaultLevel}` | `thinkingLevelMap: Partial<Record<ModelThinkingLevel, string\|null>>`（`packages/ai/src/providers/model-schema.ts:14-15`） | 投影必须分叉 |
+| `supportsTools` | 自定义模型构造器会读它（§1） | 模型配置里没有工具能力字段（全文无此键） | **pi 上"仅对话"结论写不回去**，只能记一条 warn，不能假装生效 |
+| `ctx.hasUI` | ✅ | ✅（:331） | 一致，打印模式判定可以共用 |
+| `registerProvider` 入参 | `{baseUrl, api, apiKey, authHeader, models}` | 同左 | 唯一完全一致的一项，这正是适配层能很小的原因 |
+
+**判别器只用一条：API 对象上有没有 `logger`。** `src/host.ts` 的 `detectHost` 就靠它，
+其余模块看不到宿主分支；新增宿主差异时改那一处，不要散到调用方。
+
+pi 的 `session_shutdown` 与 omp 不同：它的 reason 是
+`"quit" | "reload" | "new" | "resume" | "fork"`（`types.ts:826`），但**每一次都伴随一次
+会话替换**——`agent-session-runtime.ts` 的 `teardownCurrent()` 先 emit 再 `dispose()`，
+随后同进程内建出新的 session（`:218`/`:251`/`:305`/`:396` 都是这个形状），
+`reload` 同样会 `oldRunner.invalidate()` 再换 runner（`agent-session.ts:3693`）。
+新 session 意味着扩展工厂重跑 = 重新 `acquire()`，所以引用计数不会单边下降，
+pi 侧把每次 shutdown 都当主会话是安全的。（omp 侧相反：子代理会发 shutdown 而**不**重载
+扩展，所以那一侧必须看 `agent.kind`。）
+
+没有 `.github`/配置改动也能验 pi：`pi -p --no-session -ne -e ./src/index.ts --model …`
+（`-ne` 关掉发现，只加载本地这份源码），实测文本轮 `OK`、工具轮正常列目录。
+
+## 17. 出口决定免费池能不能用（2026-10-19）
+
+**这台机器的出口会决定免费池能不能用。** 曾经的系统手动代理 `192.168.31.50:7890`
+（`ProxyEnable=1`）其出口被 Zen 判为滥用：免费池**每一个**模型都返回同一段上游文案——
+
+> OpenCode's free models aren't available from your current network because we've detected
+> abusive traffic from this IP address. … subscribe to OpenCode Go
+
+omp 与 pi 两条链路、`oc-space-bunny-free` 与 `oc-mimo-v2.6-flash-free` 两个模型，结果一致；
+`OPENCODE_ZEN_CLI_PROXY=0` 直连后立刻恢复（文本轮恰好 `OK`，工具轮正常列目录）。
+**这段话是出口的属性**，不是模型、也不是扩展的属性——排查时先看出口，别先怀疑链路。
+
+### 分类器原先认不出它（本次修掉）
+
+这段文案在 `errors.ts` 里**没有任何匹配模式**：既不含 `not available in your country`，
+也没有 `regionerror`。用它喂 `classifyFailure`（2026-10-19 实测）：
+
+| 到达时的状态码 | 原判定 | 会把人引到哪 |
+| --- | --- | --- |
+| 403 | `UNKNOWN`「本地代理拒绝了请求（浏览器来源被禁用），属内部错误」 | 去查扩展自己，方向完全错 |
+| 400 | `REQUEST_REJECTED`「通常是给仅对话模型派发了工具」 | 去重测模型能力，方向也错 |
+| 其它 | `UNKNOWN` 原文回显 | 没有任何建议 |
+
+现在 `abusive traffic` / `from your current network` 与地区封锁同归 `REGION_BLOCKED`
+（封锁的都是**出口**），于是 `filters.json` 的「隐藏地区封锁的」对它有效，`probe` 在这种出口下
+会把整池判成地区封锁——那是出口的形状，换出口后必须重测，别拿这份结论去过滤。
+
+### 现在这台机器：手动代理已关，只剩 PAC（2026-10-19 实测）
+
+`systemProxyEnvironment(true)` 现在抛 `请先启用 Windows 手动系统代理；暂不支持仅 PAC 配置`，
+于是 `runtime-host.ts` 的两条分支分岔得很明显：
+
+| 设置 | 行为 |
+| --- | --- |
+| 未设置（win32 默认想走系统代理） | 读取失败 → **降级直连**并广播一条说明 → 免费池照常可用（实测文本轮 `OK`） |
+| `OPENCODE_ZEN_CLI_PROXY=1` | 严格模式，把同一个错误**抛出** → 启动失败 → 宿主只显示 `Model not found`，真实原因（读不到手动代理）在打印模式下看不到 |
+| `OPENCODE_ZEN_CLI_PROXY=0` | 直连，永远可用 |
+
+所以 `=1` 是「我确实要一个手动代理」的断言：机器上没有就会起不来。排查时看数据目录的
+`opencode.log`，别把它读成模型下线。

@@ -121,7 +121,7 @@ omp -p --model opencode-zen-cli/oc-space-bunny-free \
 
 ## `/opencode2pi-cli`
 
-omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
+omp / pi 都没有扩展设置页，斜杠命令是本扩展唯一的界面。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -139,7 +139,7 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | ✅ | 可用，支持工具调用 |
 | ⚠️ | **现在不行**（上游 5xx，或没被分类器识别的错误），不代表模型没了 |
 | 🚧 | **限流 / 配额耗尽，或本地链路不可达**。前者等配额恢复，后者跑 `doctor` |
-| ❌ | 确定不可用：连续两次确认下线，或上游按地区封锁（403 · not available in your country） |
+| ❌ | 确定不可用：连续两次确认下线，或上游封锁了当前出口（403 · not available in your country / abusive traffic from this IP） |
 
 每行末尾直接带上原因（上游原文、HTTP 状态或超时秒数）和探测时间，所以不存在
 「这个模型到底怎么回事」需要另外去查的情况。
@@ -180,7 +180,7 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | --- | --- | --- |
 | 上游限流或配额耗尽（429） | `RATE_LIMIT` | 等配额恢复，或换一个模型 |
 | 模型已不可用（404 / ModelError） | `MODEL_GONE` | 上游已不再支持该模型，换一个 |
-| 该模型在当前网络地区不可用 | `REGION_BLOCKED` | 上游的地区封锁，不是本机问题；换一个模型，或 `OPENCODE_ZEN_CLI_PROXY=1` 走系统代理换出口 |
+| 该模型在当前网络地区不可用 | `REGION_BLOCKED` | 上游封锁的是**出口**（`not available in your country`，或 `abusive traffic from this IP`），不是本机；换一个出口（`OPENCODE_ZEN_CLI_PROXY=0` 直连 / `=1` 走系统代理，看哪个没被拒）或换一个模型。整池都回同一段话就是出口被封 |
 | 上游拒绝了这次请求（400） | `REQUEST_REJECTED` | 多半是给「仅对话」模型派发了工具，跑 `probe` 让结论写回 |
 | 上游暂时不可用（5xx） | `UPSTREAM` | 稍后重试 |
 | 本地链路未就绪 | `RUNTIME_MISSING` | 跑 `doctor`，看是 CLI、serve 还是代理这一环 |
@@ -224,7 +224,7 @@ omp 没有扩展设置页，斜杠命令是本扩展唯一的界面。
 | 变量 | 作用 |
 | --- | --- |
 | `OPENCODE_ZEN_CLI_PORT` | 本地服务端口（1024–65535，默认 `41980`）。显式指定时占用即启动失败；不指定时占用自动退让 |
-| `OPENCODE_ZEN_CLI_PROXY` | `0` 强制直连、`1` 强制走系统代理；不设置时读 `<dataDir>/settings.json`，Windows 默认开、其它平台默认关 |
+| `OPENCODE_ZEN_CLI_PROXY` | `0` 强制直连、`1` 强制走系统代理；不设置时读 `<dataDir>/settings.json`，Windows 默认想走系统代理、其它平台默认关。默认路径下"读不到系统代理"（未启用或仅 PAC）会自动降级直连；`=1` 是严格模式，读不到就**启动失败**（宿主只报 `Model not found`，原因在 `<dataDir>/opencode.log`） |
 | `OPENCODE_ZEN_CLI_DATA_DIR` | 数据目录（模型缓存、健康记录、子进程日志）。默认按平台落在用户配置目录 |
 
 数据目录内容：`models-cache.json`（目录缓存）、`health.json`（健康记录）、
