@@ -92,8 +92,8 @@ omp / pi 进程
     推理，该由用户发起。`status` 与 `probe` 的差别只在事后动作：只有 `probe` 询问过滤。
 
 13. **上下文窗口的本地覆盖只写在 `src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`**（当前有
-    `oc-mimo-v2.6-flash-free` 与 `oc-deepseek-v4.1-flash-free` → 均为 1048576，理由与回退方法见
-    `docs/FINDINGS.md` §15）。注册表与本地代理的 `/v1/models` 两处都必须经
+    `oc-mimo-v2.6-flash-free` → 1048576 与 `oc-deepseek-v4.1-flash-free` → 300000，理由与
+    回退方法见 `docs/FINDINGS.md` §15）。注册表与本地代理的 `/v1/models` 两处都必须经
     `publishedContextWindow()` 取值，别在别处再写一遍；每次生效写一条 note 并由
     `applyProvider` 记进日志，不静默。
 

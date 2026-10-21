@@ -139,17 +139,19 @@ test('the mimo context override fires on the feed value, and never silently', ()
 });
 
 test('the deepseek-v4.1 override is per id, not per 200000 bucket', () => {
-  // opencode2pi 0.6.1 / opencode2dsh #81: the free id publishes 200000 while
-  // its paid twin declares 1000000, and a live needle probe recalled at
-  // 1,011,668 tokens. Only contextWindow changes; the output cap stays 32000.
+  // opencode2pi 0.6.2 / opencode2dsh #99: the free id publishes 200000 while
+  // its paid twin declares 1000000. #81 measured 1,011,668 tokens on
+  // 2026-10-16, but the 2026-10-20 re-probe recalls at 315,596 and refuses
+  // ~326k with context_length_exceeded, so the free entry advertises 300000.
+  // Only contextWindow changes; the output cap stays 32000.
   const notes: string[] = [];
   const [row] = toProviderModels(
     [{ id: 'oc-deepseek-v4.1-flash-free', name: 'DeepSeek', context: 200_000, output: 32_000 }],
     new Set(), new Set(), notes,
   );
-  expect(row!.contextWindow).toBe(1_048_576);
+  expect(row!.contextWindow).toBe(300_000);
   expect(row!.maxTokens).toBe(32_000);
-  expect(notes.join(' ')).toContain('200000 → 1048576');
+  expect(notes.join(' ')).toContain('200000 → 300000');
 
   // Another model in the same 200000 bucket has no measurement of its own, so
   // the feed still speaks unchanged.

@@ -195,7 +195,7 @@ Zen 直连有 `SHAPE_REJECTED` / `AUTH`（403/401 的几种来源），本机链
 `fledge-alpha-free` 与 `muse-spark-1.3-contributor-free` 在两台机器上分别是
 "被封锁"和"正常"，自动规则有一半时间是错的。
 
-## 15. 上下文窗口覆盖：mimo 与 deepseek-v4.1（2026-10-14 / 2026-10-19）
+## 15. 上下文窗口覆盖：mimo 与 deepseek-v4.1（2026-10-14 / 2026-10-21）
 
 ### mimo：feed 发布 200000，覆盖为 1048576（2026-10-14）
 
@@ -207,14 +207,20 @@ CLI 配置都声明 **1048576**（opencode2dsh issue #17 报告过同一分歧�
 为什么不实测上限：两种错误代价不对等——声明偏小只会提前压缩上下文（可恢复），声明偏大会让
 请求真实溢出（不可恢复）。2026-10-11 因此保守取 200000；本次随上游改判为 1048576。
 
-### deepseek-v4.1：同一 canonical 模型的免费/付费 id 窗口不同（2026-10-19 合并 opencode2pi 0.6.1）
+### deepseek-v4.1：同一 canonical 模型的免费/付费 id 窗口不同（2026-10-21 按 opencode2pi 0.6.2 改判 300000）
 
 `models.dev` 给同一 canonical 模型的两个 id 写了不同窗口：免费
 `deepseek-v4.1-flash-free` 是 **200000**，付费 `deepseek-v4.1-flash` 是 **1000000**
 （2026-10-19 直接读 `https://models.dev/api.json` 核实；本机 OpenCode 目录里也有
-`opencode/deepseek-v4.1-flash-free`）。上游 opencode2dsh #81 在免费通道上用
-needle-in-a-haystack 实测到 **1,011,668 prompt tokens 仍能正确召回**，因此取 1048576，
-而不是照抄付费 id 的 1000000。
+`opencode/deepseek-v4.1-flash-free`）。2026-10-19 合并 opencode2pi 0.6.1（opencode2dsh
+#81）时取 1048576，依据是上游 2026-10-16 在免费通道用 needle-in-a-haystack 实测到
+**1,011,668 prompt tokens 仍能正确召回**。
+
+上游 2026-10-20 对同一通道复测后改判：**315,596 tokens 仍能召回，约 326k 直接
+`context_length_exceeded`**，1M 已不再被服务。声明 1M 不只是偏乐观，而是主动有害：
+宿主在 `0.8 × contextWindow`（800k）才压缩，长会话会在从未压缩的情况下越过真实上限，
+然后硬失败。现取 **300000**：宿主在 240k 压缩，`240k + 32k` 输出预算 = 272k，仍低于
+315,596 的实测召回点。315,596 / ~326k 是上游观测，本机链路未独立复现。
 
 只覆盖 `contextWindow`；`maxTokens` 保持 feed 的 **32000**（付费 id 的 384000 不适用）。
 覆盖按 id 生效：同桶的 `glm-5.3-flash-free` 发布值仍是 200000，测试同时钉住这两点，
@@ -225,8 +231,8 @@ needle-in-a-haystack 实测到 **1,011,668 prompt tokens 仍能正确召回**，
 覆盖只有一处：`src/provider.ts` 的 `LOCAL_MODEL_OVERRIDES`，经 `publishedContextWindow()`
 同时作用于注册表（`contextWindow`）与本地代理的 `/v1/models`（`context_length`）——omp 读
 窗口以列表为准（`server.ts` 注释），只改一处等于没改。每次生效写一条 note 由
-`applyProvider` 记进日志；feed 自己改为 1048576 后条目自动停火，留作回归护栏。若后续实测
-证明上限确实是 200000，删掉该条目即可回退。
+`applyProvider` 记进日志；feed 自己改为覆盖值后条目自动停火，留作回归护栏。若后续实测
+证明上限与覆盖值不符，改数值或删掉该条目即可回退。
 
 ## 16. 双宿主：pi 1.3.0 与 omp 的扩展 API 差异（2026-10-19）
 

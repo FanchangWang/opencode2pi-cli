@@ -34,12 +34,17 @@ const DEFAULT_MAX_TOKENS = 8192;
  * (docs/FINDINGS.md §15).
  *
  * `oc-deepseek-v4.1-flash-free` is the same shape, merged from opencode2pi
- * 0.6.1 (opencode2dsh #81): models.dev gives the free and paid twins of one
- * canonical model different windows — the free id says 200000 while
- * `deepseek-v4.1-flash` says 1000000. A needle-in-a-haystack probe of the live
- * free lane recalled correctly at 1,011,668 prompt tokens, so 1048576 is
- * measured, not copied from the paid entry. Only `contextWindow` is overridden;
- * the feed's 32000 output limit is published unchanged.
+ * 0.6.1 and corrected by 0.6.2 (opencode2dsh #81 → #99): models.dev gives the
+ * free and paid twins of one canonical model different windows — the free id
+ * says 200000 while `deepseek-v4.1-flash` says 1000000. #81's 2026-10-16 probe
+ * recalled a needle at 1,011,668 tokens, but the same lane re-probed on
+ * 2026-10-20 recalls only at 315,596 and refuses ~326k with
+ * `context_length_exceeded`; 1M is no longer served. Declaring 1M is actively
+ * harmful: the host compacts at 0.8 × contextWindow (=800k), so a long session
+ * grows past the real ceiling without ever compacting. 300000 makes it compact
+ * at 240k, and 240k + the 32k output budget is 272k, still below 315,596. Only
+ * `contextWindow` is overridden; the feed's 32000 output limit is published
+ * unchanged.
  *
  * Applied in {@link publishedContextWindow}; once the feed itself publishes the
  * corrected value the values match and the entry stops firing — it stays as a
@@ -54,8 +59,8 @@ const LOCAL_MODEL_OVERRIDES: Readonly<Record<string, { readonly contextWindow: n
     reason: 'MiMo model card and official CLI config declare 1048576; the feed publishes 200000',
   },
   'oc-deepseek-v4.1-flash-free': {
-    contextWindow: 1_048_576,
-    reason: 'paid twin declares 1000000 and the free lane recalled a needle at 1,011,668 tokens; the feed publishes 200000',
+    contextWindow: 300_000,
+    reason: 'free lane recalls a needle at 315,596 tokens and refuses ~326k with context_length_exceeded (2026-10-20); the feed publishes 200000',
   },
 };
 

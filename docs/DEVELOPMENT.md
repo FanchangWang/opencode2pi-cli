@@ -83,17 +83,18 @@ host.ts <── index.ts / commands.ts / provider.ts   （两个宿主的差异�
 | `input` | `images === true ? ['text','image'] : ['text']` |
 | `supportsTools` | `toolcall === true && !chatOnly.has(id)`。**只有 omp 带这个键**：pi 的模型配置里没有工具能力字段，所以 pi 上"仅对话"结论写不回去，`applyProvider` 为此出一条 warn 而不是假装生效 |
 | `cost` | 四项恒为 0（免费池） |
-| `contextWindow` | `m.input ?? m.context`，非正整数回落 `128000`；`oc-mimo-v2.6-flash-free` 与 `oc-deepseek-v4.1-flash-free` 由本地覆盖改写为 `1048576`（见下） |
+| `contextWindow` | `m.input ?? m.context`，非正整数回落 `128000`；`oc-mimo-v2.6-flash-free` 覆盖为 `1048576`、`oc-deepseek-v4.1-flash-free` 覆盖为 `300000`（见下） |
 | `maxTokens` | `m.output`，非正整数回落 `8192` |
 
 **本地覆盖（`LOCAL_MODEL_OVERRIDES`）**：feed 发布值与模型卡/官方配置/实测冲突时以审计值为准，
 目前有两条：`oc-mimo-v2.6-flash-free`（200000 → 1048576）与
-`oc-deepseek-v4.1-flash-free`（200000 → 1048576，免费 id 与付费 twin 的 1000000 不一致，
-上游在 1,011,668 tokens 处实测召回；`maxTokens` 仍是 feed 的 32000）。理由与回退方法见
+`oc-deepseek-v4.1-flash-free`（200000 → 300000；免费通道 2026-10-20 复测在 315,596 tokens
+仍可召回、约 326k 报 `context_length_exceeded`，取 300000 让宿主在 240k 压缩，加 32k 输出
+预算仍低于召回点；`maxTokens` 仍是 feed 的 32000）。理由与回退方法见
 [`FINDINGS.md`](FINDINGS.md) §15。覆盖经 `publishedContextWindow()` 一个函数取值，注册表
 与 `/v1/models` 两处都用它——只改一处会让两个数字互相矛盾，而 omp 读窗口以列表为准。每次
 生效写一条 note，由 `applyProvider` 记进日志：看不见的覆盖等于无法回滚的覆盖。feed 自己
-改为 1048576 后条目自动停火，留作回归护栏。
+改为覆盖值后条目自动停火，留作回归护栏。
 
 **故意不注册 `fetchDynamicModels`**：目录在启动时已从本地服务读到，宿主 24h 动态缓存
 只会让这份表变旧。
